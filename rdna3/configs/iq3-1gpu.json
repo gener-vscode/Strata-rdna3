@@ -6,8 +6,9 @@
  "backend": "hip",
  "gpu": "@GPUS@",
  "layer_split": "auto",
- "host": "127.0.0.1",
- "open_browser": false,
+"host": "127.0.0.1",
+"dashboard": "/ui",
+"open_browser": false,
  "engine_silence_s": 1800,
  "lib_dirs": "@ROCM_LIBS@",
  "args": [
