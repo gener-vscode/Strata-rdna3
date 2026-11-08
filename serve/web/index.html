@@ -260,6 +260,17 @@
     </div>
   </div>
 </aside>
+<!-- ============================ Offline veil ============================ -->
+<!-- shown while the server is not answering: the header stays usable, everything under it is covered (app.js
+     sets it from the same failure count as the "Server not reachable" pill) -->
+<div class="offline" id="offline" hidden>
+  <div class="offline__panel">
+    <svg class="st-icon offline__icon" aria-hidden="true"><use href="web/sprite.svg#i-warning"/></svg>
+    <div class="offline__title">Strata is not reachable</div>
+    <div class="offline__sub">The server stopped answering, so nothing here is live. Start it
+      again &mdash; this page reconnects by itself.</div>
+  </div>
+</div>
 <div class="scrim" id="scrim" hidden></div>
 <div class="st-toasts" id="toasts" aria-live="polite"></div>
 <script src="web/app.js"></script>

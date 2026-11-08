@@ -169,6 +169,49 @@ main { flex: 1; min-height: 0; display: flex; }
 .st-toast { animation: toast-in 180ms var(--st-ease); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 
+/* ---------------------------------------------------------------- offline veil
+   The server stopped answering: the page body (everything under the header) is covered by a dark veil, so a
+   stopped Strata is obvious and its last numbers cannot be read as live. The header keeps its own z-index. */
+/* the fallback; app.js measures the real header and sets --st-header-h on the document when it shows the veil */
+:root {
+  --st-header-h: 60px;
+}
+
+.st-header {
+  height: var(--st-header-h);
+}
+.offline { 
+  position: fixed; 
+  inset: var(--st-header-h) 0 0 0; z-index: 45; 
+  display: flex; 
+  align-items: center;
+  justify-content: center;
+  padding: var(--st-s-6); 
+  background: rgba(9, 12, 14, .68); 
+  pointer-events: none;
+  animation: offline-in 220ms var(--st-ease);
+  backdrop-filter: blur(3px);
+}
+.offline__panel { 
+    background: rgba(255, 255, 128, .25);
+    border-radius: 32px;
+    padding: 24px 48px 32px 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--st-s-2);
+    text-align: center;
+    color: #fff;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, .5);
+  transform: translateY(-75%);
+}
+
+.offline__icon { width: 34px; height: 34px; color: var(--st-warn); }
+.offline__title { font-weight: var(--st-fw-black); font-size: var(--st-fs-xl); line-height: var(--st-lh-tight); }
+.offline__sub { font-size: var(--st-fs-md); color: rgba(255, 255, 255, .82); }
+@keyframes offline-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .offline { animation: none; } }
+
 /* ---------------------------------------------------------------- narrow screens */
 @media (max-width: 1000px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }

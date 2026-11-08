@@ -164,21 +164,36 @@ function setMetric(key, value, unit, sub) {
 
 let lastMetrics = null, metricsFailures = 0, keyWarned = false, mcpTick = 0;
 let reqShowAll = false;   // the Monitor's request table: the last 12, or every one the server keeps (issue #35)
+// A PC that went to sleep or lost its network keeps the connection open until the browser gives up (tens of
+// seconds, which is what net::ERR_CONNECTION_TIMED_OUT is), and this loop waits for each request. So one poll is
+// given METRICS_TIMEOUT ms, and OFFLINE_AFTER failed polls in a row veil the page.
+const METRICS_TIMEOUT = 4000;
+const OFFLINE_AFTER = 3;
+function timedFetch(url, ms, opts = {}) {
+  const c = new AbortController();
+  const giveUp = setTimeout(() => c.abort(), ms);
+  return fetch(url, {...opts, signal: c.signal}).finally(() => clearTimeout(giveUp));
+}
 async function poll() {
   try {
-    const r = await fetch(reqShowAll ? "metrics?requests=all" : "metrics", {headers: headers()});
-    if (r.status === 401) {
+    const r = await timedFetch(reqShowAll ? "metrics?requests=all" : "metrics", METRICS_TIMEOUT, {headers: headers()});
+    if (r.status === 401) {                     // reachable, just needing a key: the veil must not cover it
+      metricsFailures = 0;
+      setOffline(false);
       setPill("error", "API key needed");
       if (!keyWarned) { keyWarned = true; toast("warn", "API key needed", "This server needs a key: add it under About > Settings.", 6000); }
     } else if (r.ok) {
       lastMetrics = await r.json();
       metricsFailures = 0;
+      setOffline(false);
       render(lastMetrics);
     } else {
       throw new Error(`HTTP ${r.status}`);
     }
   } catch (e) {
-    if (++metricsFailures === 3) setPill("error", "Server not reachable");
+    // >= and not ==: a connection that breaks and half-recovers must still end up veiled, and re-asserting an
+    // already veiled page is one assignment
+    if (++metricsFailures >= OFFLINE_AFTER) { setPill("error", "Server not reachable"); setOffline(true); }
   }
   if (tab === "monitor" && ++mcpTick % 10 === 0) loadMcp();       // server states change rarely: every 10 s
   setTimeout(poll, 1000);
@@ -188,6 +203,23 @@ function setPill(state, text) {
   $("pill").dataset.state = state === "error" ? "queued" : state;
   $("pill-text").textContent = text;
 }
+
+// The pill alone is easy to miss: while the server is not answering, everything under the header is covered by a
+// dark veil (the header stays clickable, so the tabs and the theme button keep working). It lifts on the first
+// metrics response back, i.e. as soon as Strata is started again.
+function setOffline(on) {
+  const veil = $("offline");
+  if (!veil) return;                       // a page loaded from an older server has no veil to show
+  if (on) {                                // measured, so the veil starts under the header at any width
+    const h = Math.round(document.querySelector(".st-header").getBoundingClientRect().height) || 60;
+    document.documentElement.style.setProperty("--st-header-h", `${h}px`);
+  }
+  veil.hidden = !on;
+}
+// The browser knows a network is gone long before a request to it runs into the timeout above. The poll loop keeps
+// running either way, so starting Strata again lifts the veil without reloading.
+window.addEventListener("offline", () => { setPill("error", "Network not reachable"); setOffline(true); });
+window.addEventListener("online", () => { metricsFailures = 0; setOffline(false); });
 
 function render(m) {
   const live = m.live || {}, hw = m.hardware || {}, st = m.hardware_static || {}, eng = m.engine || {}, h = m.history || {};

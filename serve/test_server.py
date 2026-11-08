@@ -3470,6 +3470,62 @@ class WebApp(unittest.TestCase):
                 self.assertEqual(code, 200)
                 self.assertIn(want, ctype)
 
+    def test_the_whole_app_can_move_to_another_path(self):
+        # the run config's "dashboard" (or --dashboard): the page and the files it loads for itself move under
+        # that path, the API does not.  Ported from upstream's test for the feature; the parts of upstream this
+        # fork does not have yet (the page's "landing" tab) are not asserted here.
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None                       # urllib follows a 301 by itself; the answers below need it raw
+        opener = urllib.request.build_opener(NoRedirect)
+
+        def moved(path):
+            try:
+                with opener.open(self.base + path, timeout=10) as r:
+                    return r.status, r.headers.get("Location", "")
+            except urllib.error.HTTPError as e:
+                return e.code, e.headers.get("Location", "")
+
+        self.svc.dashboard = "/ui"
+        try:
+            code, ctype, body = self.get("/ui/")
+            self.assertEqual(code, 200)
+            self.assertIn("text/html", ctype)
+            self.assertIn(b"\"web/app.js\"", body)
+            for path, to in (("/", "/ui/"), ("/?q=hi", "/ui/?q=hi"), ("/ui", "/ui/")):
+                with self.subTest(path=path):
+                    self.assertEqual(moved(path), (301, to))
+            for path in ("/ui/web/app.js", "/ui/web/app.css", "/ui/web/tokens.css", "/ui/web/sprite.svg",
+                         "/ui/health", "/ui/metrics", "/ui/status", "/ui/v1/models"):
+                with self.subTest(path=path):
+                    self.assertEqual(self.get(path)[0], 200)
+            for path in ("/web/app.js", "/web/tokens.css"):        # the page's own files are not at / any more
+                with self.subTest(path=path):
+                    self.assertEqual(self.get(path)[0], 404)
+            # the API does not move: /v1 and the rest answer where they always have, and the page's own calls
+            # (relative) arrive under /ui and work there too
+            for path in ("/health", "/v1/models", "/metrics", "/ui/health", "/ui/v1/models"):
+                with self.subTest(path=path):
+                    self.assertEqual(self.get(path)[0], 200)
+            data = json.dumps({"model": "m", "messages": [{"role": "user", "content": "hi"}],
+                               "max_tokens": 5}).encode()
+            for path in ("/v1/chat/completions", "/ui/v1/chat/completions"):
+                req = urllib.request.Request(self.base + path, data=data,
+                                             headers={"Content-Type": "application/json"})
+                with self.subTest(path=path):
+                    self.assertEqual(urllib.request.urlopen(req, timeout=10).getcode(), 200)
+            for path in ("/", "/web/app.js"):                      # a POST there is aimed at the API, so it is
+                req = urllib.request.Request(self.base + path, data=data,       # not turned into a GET of the page
+                                             headers={"Content-Type": "application/json"})
+                try:
+                    code = urllib.request.urlopen(req, timeout=10).getcode()
+                except urllib.error.HTTPError as e:
+                    code = e.code
+                with self.subTest(path=path):
+                    self.assertEqual(code, 404)
+        finally:
+            self.svc.dashboard = ""
+
     def test_only_the_app_files_are_served(self):
         for path in ("/web/..%2Fserver.py", "/web/index.html", "/web/test.py", "/fonts/..%2F..%2Fsetup.py",
                      "/fonts/missing.woff2", "/fonts/x.ttf"):

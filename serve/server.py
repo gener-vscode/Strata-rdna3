@@ -2522,6 +2522,32 @@ def network_path(path: str) -> bool:
     return p.startswith("\\\\") or p.startswith("\\??\\")
 
 
+# the paths this server answers itself, so a chosen app path must not be one of them
+SERVED_PATHS = ("/web", "/fonts", "/v1", "/api", "/metrics", "/health", "/status", "/slots", "/models", "/props",
+                "/mcp", "/config", "/settings", "/unload", "/load", "/api-monitor")
+# the page and its own files, by first path segment: with an app path set these come only under it, which is what
+# leaves / free.  The API ("/v1" and the rest) is not one of them - a client's base URL never changes.
+APP_PATHS = ("", "web", "fonts", "api-monitor")
+
+
+def dashboard_of(value, what: str) -> str:
+    """The run config's "dashboard" (or --dashboard): the path the web page is served under, "" for the root.
+    It moves the page and the files the page loads for itself (its styles, script, icon file and font), which
+    leaves / for whatever the user runs in front of Strata; the API keeps answering at /v1, so no client of
+    Strata's API has to change anything.  Raises ValueError naming what is expected, like the config's other
+    checks, so a wrong path stops the start instead of leaving a server with no page to open."""
+    if value is None or value in ("", "/"):
+        return ""                                              # the default, as it has always been
+    if not isinstance(value, str) or not value.startswith("/"):
+        raise ValueError(f'{what}: expected a path beginning with "/", like "/ui" or "/strata/ui", not {value!r}')
+    parts = value.strip("/").split("/")
+    if len(value) > 60 or any(not p or not all(c.isalnum() or c in "-_" for c in p) for p in parts):
+        raise ValueError(f'{what}: expected names of letters, digits, "-" or "_" between slashes, not {value!r}')
+    if "/" + parts[0] in SERVED_PATHS:
+        raise ValueError(f'{what}: /{parts[0]} is one of the paths this server answers itself; choose another name')
+    return "/" + "/".join(parts)
+
+
 def vision_log_tail(log=None, limit: int = 16384) -> str:
     """The last `limit` bytes of the encoder's stderr file (`log` is the file object it was started with; "" when there
     is none or it cannot be read)."""
@@ -3886,6 +3912,8 @@ class Service:
         self.client_disconnect_cancels = 0
         self.draining = False
         self.active_cancels: set[threading.Event] = set()
+        # the path the web app is served under: "" for / as always, "/ui" for the run config's "dashboard"
+        self.dashboard = ""
         # #332: the API request monitor (/api-monitor) keeps the last 100 requests' prompts and answers in memory,
         # so it is off unless the config's "api_monitor" (or --api-monitor) turns it on
         self.api_monitor = False
@@ -6314,7 +6342,7 @@ def make_handler(svc: Service):
         def _cors(self):
             """#321: CORS headers for an API path (/v1/*) and an origin the config lists in cors_origins - nothing
             otherwise, so a browser keeps every other page away from the API, /settings, /unload and the MCP tools."""
-            if not svc.cors_origins or not self.path.split("?")[0].startswith("/v1/"):
+            if not svc.cors_origins or not (self._route() or "").startswith("/v1/"):
                 return
             origin = (self.headers.get("Origin") or "").rstrip("/")
             if "*" in svc.cors_origins:
@@ -6381,8 +6409,47 @@ def make_handler(svc: Service):
             self._json(401, {"error": {"type": "authentication_error", "message": "missing or wrong telemetry key"}})
             return False
 
+        def _route(self) -> str | None:
+            """The request's path for the routes below, with the app's own path (the config's "dashboard") taken off
+            the front - or None when that path has moved and this request is not under it.  Only the page and the
+            files it loads for itself (APP_PATHS) move: with `"dashboard": "/ui"` the page is at /ui/ and its styles,
+            script and font at /ui/web/*, which is what leaves / free.  The API does not move - /v1, /health,
+            /metrics and the rest answer where they always have, so no client's base URL changes.  The page is asked
+            for by relative URL, so its own calls arrive under /ui too; they work at both spellings.  At the default
+            there is nothing to take off, and every path means what it always meant."""
+            raw = self.path.split("?")[0]
+            app = svc.dashboard
+            if app and raw == app:                   # /ui without the slash: the page is at /ui/, see below
+                return None
+            if app and raw.startswith(app + "/"):
+                return raw[len(app):].rstrip("/") or ""
+            if not app:
+                return raw.rstrip("/")
+            if raw.strip("/").split("/")[0] in APP_PATHS:
+                return None
+            return raw.rstrip("/")
+
+        def _not_our_app(self):
+            """The answer for a request at an address the app left.  Two of them are only a spelling away from the
+            page: /ui is the page at /ui/ - a browser needs the slash, or it would resolve the page's relative URLs
+            against / again - and / is where the page used to be, so a bookmark or an old link to it is moved with a
+            301, keeping a ?q= that came with it.  A POST to / stays as it was: it is aimed at the API, and only /v1
+            and the rest answer there."""
+            raw, _, query = self.path.partition("?")
+            if self.command == "GET" and (raw == svc.dashboard or not raw.strip("/")):
+                self.send_response(301)
+                self.send_header("Location", svc.dashboard + "/" + ("?" + query if query else ""))
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self._json(404, {"error": {"message": f"not found - Strata's web page is at {svc.dashboard}/ "
+                                                      "(its API answers at / as usual)"}})
+
         def do_GET(self):
-            path = self.path.split("?")[0].rstrip("/")
+            path = self._route()
+            if path is None:
+                self._not_our_app()
+                return
             if path.startswith("/fonts/"):
                 # the web app's font (Outfit, OFL: serve/web/fonts); the page falls back to the system font
                 name = path[len("/fonts/"):]
@@ -6731,7 +6798,10 @@ def make_handler(svc: Service):
         def _post(self):
             if not self._authorized():
                 return
-            path = self.path.split("?")[0].rstrip("/")   # issue #55: Claude Code posts /v1/messages?beta=true
+            path = self._route()                         # issue #55: Claude Code posts /v1/messages?beta=true
+            if path is None:
+                self._not_our_app()
+                return
             path = V1_V1_ALIASES.get(path, path)         # an Anthropic client given ".../v1" as its base posts /v1/v1/messages
             if path.startswith("/v1/") and self._foreign_page():
                 return
@@ -8208,6 +8278,10 @@ def main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> in
     ap.add_argument("--api-monitor", action="store_true",
                     help="the API request monitor at /api-monitor: keeps the last 100 requests' prompts and answers in "
                          "memory (also \"api_monitor\": true in the config; off by default)")
+    ap.add_argument("--dashboard", metavar="PATH", default=None,
+                    help="serve the web page and its own files under this path instead of /, e.g. --dashboard /ui "
+                         "puts them at /ui/ and /ui/web/* and leaves / for your own pages; the API stays at /v1 "
+                         "either way (also \"dashboard\" in the config; default: /)")
     ap.add_argument("--idle-unload", type=float, default=None, metavar="SECONDS",
                     help="unload the model after this many seconds without requests, so other programs (games, other "
                          "model servers) can use the VRAM; the next request loads it again (also \"idle_unload_s\" "
@@ -8254,6 +8328,10 @@ def main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> in
         ap.error("--shutdown-timeout must be in 0..300 seconds")
     config_bytes = Path(a.config).read_bytes() if a.config else b""
     cfg = parse_config_text(config_bytes.decode("utf-8-sig"), a.config) if a.config else {}   # Notepad adds a BOM
+    try:
+        dashboard = dashboard_of(a.dashboard or cfg.get("dashboard"), '--dashboard / the config\'s "dashboard"')
+    except ValueError as e:
+        ap.error(str(e))
     split_joined_args(cfg)
     if a.config and a.engine == "strata":
         cfg = apply_saved_tuning(cfg)
@@ -8626,6 +8704,7 @@ def main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> in
               f"chat: {', '.join(hub.servers)}", flush=True)
         hub.start()
         atexit.register(hub.close)                      # the servers Strata started end with it
+    svc.dashboard = dashboard                          # where the web page is: "" = /, "/ui" = the run config's
     httpd = serve(svc, host=a.host, port=a.port)
     bound_port = httpd.server_address[1]               # --port 0: report the port the OS actually assigned
     svc.start_idle_unload()
