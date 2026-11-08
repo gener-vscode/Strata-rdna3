@@ -8,8 +8,9 @@
  "layer_split": "auto",
  "host": "0.0.0.0",
  "dashboard": "/ui",
- "open_browser": false,
- "engine_silence_s": 1800,
+"open_browser": false,
+"answer_room": false,
+"engine_silence_s": 1800,
  "lib_dirs": "@ROCM_LIBS@",
 "vision": {
     "exe": "@STRATA@/engine/strata-vision",
