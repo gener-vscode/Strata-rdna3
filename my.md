@@ -26,7 +26,7 @@ pkill -f 'serve/server.py --engine strata --config /home/tommy/repo/Strata/strat
 
 # 4) 起佢（⚠️ 想出 LAN 一定要喺呢度傳 --host，見 §8；port 唔可以撞，見 §9）
 # browser: http://127.0.0.1:18087/ui/
-.venv/bin/python rdna3/run.py iq3_xxs-1gpu --data /home/tommy/repo/Strata-data --gpus 0 --host 0.0.0.0 --port 8080 --log /tmp/rdna3-iq3-xxs.log
+.venv/bin/python rdna3/run.py iq1_m-1gpu --data /home/tommy/repo/Strata-data --gpus 0 --host 0.0.0.0 --port 8080 --log /tmp/rdna3-iq1_m.log
 
 # 5) 快速量速度（唔使成 20 分鐘）
 .venv/bin/python rdna3/bench.py iq3-1gpu --data /home/tommy/repo/Strata-data --gpus 0 --lengths 8192,32768
@@ -340,3 +340,68 @@ git push -u origin main                    # 新倉冇 main 之前
 
 ### ⚠️ 你自己喺 `run.py` 嘅兩項改動仍然喺度
 `argv` 硬寫 `--no-api-key --parallel 1`，而 `--host` default 係 `0.0.0.0` —— 即經 `run.py` 起嚟必定係 **LAN 上無 API key**。想有 key：拿走 `--no-api-key`，或者直接用 `serve/server.py --config rdna3/state/iq3_xxs-1gpu-<port>.json --api-key …`。
+
+## 13. systemd service 行緊邊個 model + 兩份 log（2026-11-08 夜）
+
+> §12 嗰份 `iq3_xxs-1gpu` 已經唔係 service 用緊嘅；而家 service = **`iq1_m-1gpu`**（呢個 fork）。
+
+### 13.1 成條鏈
+```
+strata.service  →  drop-in override.conf  →  /home/tommy/repo/Strata-rdna3/run-iq1_m.sh
+                  →  rdna3/run.py iq1_m-1gpu  →  serve/server.py  →  engine/strata --serve --pack packs/unsloth-ud-iq1_m
+```
+- 主 unit `/etc/systemd/system/strata.service` **完全冇郁過**；改嘅淨係 drop-in `/etc/systemd/system/strata.service.d/override.conf`。
+- 而家：port **8080**、host `0.0.0.0`、**無 API key**（`run.py` 硬性加，見 §12 尾）、`--max-context 200000`。
+- service 係 `enabled` → **開機自動起 IQ1_M**。
+
+### 13.2 三個 switch（新 terminal；或者先 `source ~/.bashrc`）
+| 做乜 | command |
+|---|---|
+| 切 / 重啟 **RDNA3 IQ1_M**（預設） | `ai-restart` |
+| 切返舊 repo IQ3_S / IQ3_XXS | `ai-restart-s` / `ai-restart-x` |
+| 狀態 / 停 / tail | `ai-status` / `ai-stop` / `ai-log` |
+| 全部還原做返 `setup.sh` 預設 | `sudo rm -f /etc/systemd/system/strata.service.d/override.conf && sudo systemctl daemon-reload && sudo systemctl restart strata` |
+
+### 13.3 ⚠️ 兩份 log 唔係同一份（睇錯度會以為冇警告）
+| | `logs/rdna3-iq1_m.log` | `ai-log`（journalctl） |
+|---|---|---|
+| engine 自己嘅 `WARNING: only NNN MiB of VRAM free` | ✅ | ❌ |
+| `strata serve: ... hit rate: ...%`、`decode waited ...` | ✅ | ❌ |
+| `[strata] done: 903 tokens in 22 s (93.4 tok/s)` 呢類進度 | ❌ | ✅ |
+| 時間戳、跨重啓/跨 profile 舊歷史 | ❌（每次新檔） | ✅（有幾日返嚟，仲有舊 repo） |
+
+原因（`serve/server.py:1013`、`:1045`）：engine **stderr → log 檔案**；engine **stdout → pump → journal**。所以：
+- **警告／統計**睇檔案，**即時 tok/s**睇 journal。
+- 喺 journal 隨便 grep 唔等於「而家呢次 run」，要 `--since` 或者用檔案做分界。
+
+### 13.4 一行健康檢查
+```sh
+cd /home/tommy/repo/Strata-rdna3
+S=$(grep -an "engine started" logs/rdna3-iq1_m.log | tail -1 | cut -d: -f1)
+tail -n +$S logs/rdna3-iq1_m.log | grep -aoE "WARNING.*|hit rate: [0-9.]+%|generated in [0-9]+ ms \([0-9.]+ tok/s\)" | tail -8
+grep -E "MemAvailable|SwapFree" /proc/meminfo
+```
+**紅燈**：`MemAvailable < 1 GiB`、`below 512 MiB` 重複出現、decode < 60 tok/s。
+
+### 13.5 要改 model 或 flags
+1. 改 `rdna3/configs/iq1_m-1gpu.json`（呢啲係而家關鍵值：`--max-context 200000`、`--vram-reserve-mib 768`、`--conversation-cache-mib 2048`、`--pool-workers 8`）。
+2. `ai-restart`。重啓要讀 32.42 GiB ≈ **62 秒**（實測 0.52 GiB/s）。
+3. 換**新** model 要先 pack：
+   ```sh
+   STRATA_GGUF_PY=$PWD/third_party/llama.cpp/gguf-py .venv/bin/python tools/iq_pack.py \
+     --gguf ../Strata-data/models/<新>/<shard1>.gguf --out ../Strata-data/packs/<新> --compat-bf16 --experts-bin
+   ```
+
+### 13.6 呢個 fork + IQ1_M 嘅實測（46 GB RAM / 20 GB VRAM 一張卡）
+| | |
+|---|---|
+| experts 入 RAM | 32.42 GiB（`file tier 0`，唔讀 SSD） |
+| engine RSS / swap | ~35 GiB / **0.00** |
+| MemAvailable | ~8.3 GiB ✅（對照 IQ2_XS：曾得 0.7 GiB） |
+| VRAM expert cache | 9282 slots / 12.19 GiB；free ≈ 336 MiB（`--vram-reserve-mib 768`） |
+| 速度 | decode ~95 tok/s、hit rate ~83% |
+| 唯一邊緣位 | 偶爾 `only 510 MiB of VRAM free`（閾值 512）→ 真係煩就 reserve 832 或者 `--max-context 160000` |
+
+**⚠️ 檔名地雷**：`rdna3/run.py:45` 用 `int(setup.split("-")[1][0])` 由檔名讀 GPU 數 → `ud-iq2_xs-1gpu.json` 呢類**多一個 dash** 嘅名會報 `ValueError`。檔名要係 `iq1_m-1gpu.json`、`iq2_xs-1gpu.json` 呢個格式。
+
+**未量證**：IQ1_M 嘅輸出质量（1-bit／IQ2_XXS／IQ2_S 混合 expert），要自己评。
