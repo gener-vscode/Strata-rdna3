@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start the OpenAI-compatible server with one of the six RDNA3 setups the README measured (rdna3/configs/).
+"""Start the OpenAI-compatible server with one of the RDNA3 run configs in rdna3/configs/.
 
     .venv/bin/python rdna3/run.py iq4-2gpu --data ../Strata-data                # serve on 127.0.0.1:8080
     .venv/bin/python rdna3/run.py iq3-1gpu --data ../Strata-data --gpus 1       # HIP device 1
@@ -15,10 +15,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SETUPS = [f"{q}-{g}gpu" for q in ("iq3", "iq4", "q4") for g in (1, 2)]
-PACKS = {"iq3": ("iq3_s", "IQ3_S/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf"),   # setup.py's folder names
-         "iq4": ("unsloth-ud-iq4_xs", "unsloth-UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf"),
-         "q4": ("unsloth-ud-q4_k_xl", "unsloth-UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf")}
+
+
+def setups():
+    """The setup names are the run configs in rdna3/configs/, so a new quant or a new machine is a new
+    `<name>.json` there - nothing here has to change.  It used to be a fixed SETUPS list plus a PACKS table that
+    repeated the pack and the model each run config already names, which meant a config file alone could not
+    start.  The GPU count still comes from the name's `-1gpu` / `-2gpu`, as it always has."""
+    return sorted(p.stem for p in (ROOT / "rdna3" / "configs").glob("*.json"))
 
 
 def fill(value, subst):
@@ -49,11 +53,14 @@ def config(setup, data, gpus=None, vision=True):
     if not vision:
         cfg.pop("vision", None)
         cfg["args"] = [a for a in cfg["args"] if a != "--vision"]
-    pack = data / "packs" / PACKS[setup.split("-")[0]][0]
-    shard = data / "models" / PACKS[setup.split("-")[0]][1]
+    args = cfg["args"]                          # the run config names its own pack and first GGUF shard, so the
+    if "--pack" not in args or "--native" not in args:      # runner cannot guess them for a config it does not know
+        sys.exit(f"{setup}.json must list --pack and --native in its args")
+    pack = Path(args[args.index("--pack") + 1])
+    shard = Path(args[args.index("--native") + 1])
     need = {"engine": Path(cfg["exe"]), "GGUF shard 1": shard, "pack index": pack / "index.txt",
             "tokenizer": Path(cfg["tokenizer"]) / "vocab.json", "MTP head": data / "mtp" / "rt" / "experts.bin"}
-    if vision:
+    if vision and "vision" in cfg:
         need |= {"vision encoder": Path(cfg["vision"]["exe"]), "mmproj": Path(cfg["vision"]["mmproj"])}
     missing = [f"{what}: {path}" for what, path in need.items() if not path.is_file()]
     if missing:
@@ -68,16 +75,21 @@ def config(setup, data, gpus=None, vision=True):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("setup", choices=SETUPS)
+    ap.add_argument("setup", choices=setups())
     ap.add_argument("--data", required=True, help="setup.py's data folder (models/, packs/, mtp/)")
     ap.add_argument("--gpus", help="HIP device numbers, first = layers 0-23 (default 0 or 0,1; the README used 1 and 1,0)")
-    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8080)
-    ap.add_argument("--no-vision", action="store_true", help="no image encoder (saves its RAM and start time)")
+    ap.add_argument("--dashboard", help="the path the web page answers under instead of / (overrides the config's \"dashboard\")")
+    ap.add_argument("--no-vision", action="store_true",
+                    help="no image encoder at all (saves its RAM and its start time); the config's "
+                         "\"vision\": {\"gpu\": false} instead runs the same encoder on the CPU")
     ap.add_argument("--log", help="engine log file")
     ap.add_argument("--print-config", action="store_true")
     a = ap.parse_args()
     cfg = config(a.setup, a.data, a.gpus, not a.no_vision)
+    if a.dashboard:
+        cfg["dashboard"] = a.dashboard       # on the command line; the config's own "dashboard" also works
     if a.log:
         cfg["log"] = str(Path(a.log).resolve())
     if a.print_config:
@@ -87,7 +99,7 @@ def main():
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps(cfg, indent=1) + "\n")
     os.chdir(ROOT)
-    argv = [sys.executable, str(ROOT / "serve" / "server.py"), "--engine", "strata", "--config", str(path),
+    argv = [sys.executable, str(ROOT / "serve" / "server.py"),"--no-api-key", "--parallel" ,"1", "--engine", "strata", "--config", str(path),
             "--host", a.host, "--port", str(a.port)]
     os.execv(sys.executable, argv)
 
