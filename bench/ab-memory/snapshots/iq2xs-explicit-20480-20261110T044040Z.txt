@@ -1,0 +1,145 @@
+################ Strata memory snapshot ################
+label        : iq2xs-explicit-20480
+note         : explicit --prefill 20480 + ctx 224000, conv cache OFF, idle
+taken_utc    : 20261110T044040Z
+repo         : /home/tommy/repo/Strata-rdna3
+hostname     : 7900xt
+kernel       : 6.8.0-147-generic
+git rev      : ce61f3b0207c9731d5fa7a164c2d84675b1e6fd4
+git describe : 
+git dirty    :  M rdna3/configs/iq2_xs-1gpu.json; M rdna3/configs/iq3_xxs-1gpu.json; M serve/frontend.py; M serve/server.py; M serve/test_tool_args_streaming.py;?? .agents/;?? bench/ab-memory/;
+
+---- engine build ----
+{
+ "source": "local-hip",
+ "backend": "hip",
+ "version": "0.1.49.1",
+ "archs": [
+  "gfx1100"
+ ],
+ "vision": "cpu",
+ "lib_dirs": [
+  "/opt/rocm/lib"
+ ],
+ "src": "84014e66e3c2c44a",
+ "vision_src": "587022c4c655ad94"
+}engine bytes : 47363408
+engine md5   : fb975936515c72520fb7ef8f6748a6c1
+
+---- host RAM / swap ----
+MemTotal:       48684036 kB
+MemAvailable:    4108188 kB
+SwapTotal:      25165820 kB
+SwapFree:       23913468 kB
+free:                total        used        free      shared  buff/cache   available
+free: Mem:            46Gi        42Gi       3.4Gi       348Ki       1.0Gi       3.9Gi
+free: Swap:           23Gi       1.2Gi        22Gi
+swap: NAME      TYPE SIZE USED PRIO
+swap: /swapfile file  24G 1.2G   -2
+
+---- GPU (amdgpu sysfs, every card) ----
+card1 vram_used_GiB=19.63 vram_total_GiB=19.98 gtt_used_MiB=33.06 busy=?%
+
+---- processes (what the OS really charges to RAM) ----
+PROCESS                     PID   RSS(GiB)     VmPeak      VmHWM     VmSwap  Threads
+strata-host              162014      39.55  110656700   41472032          0       42
+python                   162003       0.07     949952     207644     137348        9
+strata-vision            162010       0.18    1202704    1034348     794276        1
+
+engine smaps_rollup:
+  Rss:            41472032 kB
+  Pss:            41469175 kB
+  Pss_Dirty:      41158120 kB
+  Private_Dirty:  41158120 kB
+  Anonymous:      41434088 kB
+  LazyFree:              0 kB
+  Swap:                  0 kB
+  Locked:                0 kB
+gpu-visible pages of the engine (VSZ, includes the VRAM it maps):
+  VmSize:	110656340 kB
+  VmData:	41828088 kB
+
+---- engine command line ----
+/home/tommy/repo/Strata-rdna3/engine/strata --serve --pack /home/tommy/repo/Strata-data/packs/unsloth-ud-iq2_xs --native /home/tommy/repo/Strata-data/models/unsloth-UD-IQ2_XS/Qwen3.8-Flash-Next-UD-IQ2_XS-00001-of-00003.gguf --expert-profile /home/tommy/repo/Strata-rdna3/data/expert-profile.bin --prefill 20480 --spec 4 --spec-min-p 0.7 --mtp /home/tommy/repo/Strata-data/mtp/rt --max-context 224000 --kv q4_0 --ple-io direct --stats --vision --expert-cache auto --ple-row-cache 1048576 --conversation-cache-mib 0 --conversation-cache-slots 0 --mtp-draft-vocab /home/tommy/repo/Strata-rdna3/rdna3/draft_vocab_zh60k.bin --pcie-frac 0 --vram-reserve-mib 832 --pool-workers 7 --mtp-q4 all --mtp-window 4096 --adapt-every 1 --adapt-swaps 32 --resident-experts 
+---- engine env (STRATA_/HSA_/HIP_/GPU_) ----
+  GPU_MAX_HW_QUEUES=6
+  HIP_VISIBLE_DEVICES=0
+  STRATA_ADAPT_OVERLAP=1
+  STRATA_COMBINE_CPU=1
+  STRATA_ENGINE_NICE=0
+  STRATA_FUSE_CONVAB=1
+  STRATA_GDN_CHUNKED=1
+  STRATA_GDN_CHUNK_GDV=0
+  STRATA_GDN_CONVL2=1
+  STRATA_GDN_HEAD=1
+  STRATA_GDN_NOY=1
+  STRATA_GDN_PP=1
+  STRATA_GR_FUSED=1
+  STRATA_GR_INJ_UP=1
+  STRATA_GR_RDNA=1
+  STRATA_GR_RDNA_A8=1
+  STRATA_GR_RDNA_Q8=1
+  STRATA_HC_UPMIX=1
+  STRATA_HEAD_MIX_MULTI=1
+  STRATA_HIPBLASLT_TUNING=/home/tommy/repo/Strata-rdna3/tools/hip/gfx1100-hipblaslt-100200.txt
+  STRATA_HIP_WMMA=1
+  STRATA_KV_HOST_DMA=1
+  STRATA_PA_FAST=1
+  STRATA_PA_KLDS=1
+  STRATA_PEER_TRANSPORT=host
+  STRATA_PF_F16=2
+  STRATA_PF_FUSED=1
+  STRATA_PF_GEMM=1
+  STRATA_PF_GROUP_RES=1
+  STRATA_PF_HCDOWN=1
+  STRATA_PF_PAD=1
+  STRATA_PREFILL_AUTO_MAX=20480
+  STRATA_PREFILL_CPU_SHARE=0
+  STRATA_PREFILL_CPU_SHARE_MAX=4096
+  STRATA_PREFILL_MMQ_TILE_ROWS=32
+  STRATA_PREFILL_RING=192
+  STRATA_QFUSE=1
+  STRATA_QSA_ROWS=1
+  STRATA_RDNA_MMVQ_WAVE=3
+  STRATA_RDNA_Q6K=1
+  STRATA_ROUTE_PUBLISH=1
+  STRATA_SELECT_WMMA=1
+  STRATA_SH_STREAM=0
+  STRATA_STAGER_RING=64
+  STRATA_TOPK_SPLIT_MIN=98304
+  STRATA_VERIFY_QDEDUP=1
+  STRATA_WAIT_FUSE=1
+
+---- systemd unit peak (what the whole service cost) ----
+  Nov 10 11:30:11 7900xt run-iq2_xs.sh[93172]: [strata] thinking: 2410 of max 24000 tokens, 53.8 tok/s, 59 s, 7007 chars streamed: ..."11:11:02 ... 43.5G memory peak,
+  Nov 10 11:54:30 7900xt systemd[1]: strata.service: Consumed 2h 15min 38.021s CPU time, 43.3G memory peak, 0B memory swap peak.
+  Nov 10 12:36:11 7900xt systemd[1]: strata.service: Consumed 3h 12min 19.709s CPU time, 42.7G memory peak, 0B memory swap peak.
+
+---- engine's own memory decisions (latest 'engine started' segment) ----
+  log: logs/rdna3-iq2_xs.log
+  [strata] 2026-11-10 12:36:12 engine started: /home/tommy/repo/Strata-rdna3/engine/strata --serve --pack /home/tommy/repo/Strata-data/packs/unsloth-ud-iq2_xs --native /home/tommy/repo/Strata-data/models/unsloth-UD-IQ2_XS/Qwen3.8-Flash-Next-UD-IQ2_XS-00001-of-00003.gguf --expert-profile /home/tommy/repo/Strata-rdna3/data/expert-profile.bin --prefill 20480 --spec 4 --spec-min-p 0.7 --mtp /home/tommy/repo/Strata-data/mtp/rt --max-context 224000 --kv q4_0 --ple-io direct --stats --vision --expert-cache auto --ple-row-cache 1048576 --conversation-cache-mib 0 --conversation-cache-slots 0 --mtp-draft-vocab /home/tommy/repo/Strata-rdna3/rdna3/draft_vocab_zh60k.bin --pcie-frac 0 --vram-reserve-mib 832 --pool-workers 7 --mtp-q4 all --mtp-window 4096 --adapt-every 1 --adapt-swaps 32 --resident-experts
+  strata mtp: --mtp-q4: 10 projections as Q4_0 (37.3 MiB)
+  strata mtp: draft layer loaded, 979 MiB of VRAM (experts 675, dense 111), files read in 1.58 s (496 MiB/s)
+  strata generate: expert cache auto: 12.48 GiB free, 832 MiB reserved (+125 MiB for the draft head) -> 5696 slots
+  strata generate: expert cache 7200 slots, 11.54 GiB of VRAM; policy is
+  strata generate: R4 hit path ON - resident experts are computed on the GPU
+  strata generate: token graph hit path: 7200 resident experts, decided on the device
+  FileExpertSource: allocating 37.12 GiB page-locked cache complement
+  FileExpertSource: 23.72 GiB really free for a 37.12 GiB page-locked complement; the model files' cached pages were released: 36.34 GiB free
+  FileExpertSource: mapped pinned cache complement ready: resident 37.12 GiB, pinned 37.12 GiB in 94 s; 37.12 GiB page-locked after taking the pages in steps; 
+  strata generate: resident RAM mode: 37.12 GiB of experts in RAM (page-locked), 7200 in the GPU cache; adaptive swaps exchange them with the GPU cache (no file reads)
+  strata prefill: stager ring 64 (64 pinned, 0 pageable), 4 threads
+  strata verify: window up to 6 tokens, 68.2 MiB of device buffers
+  strata mtp: draft head over 59607 tokens (119.4 MiB)
+  strata mtp: --mtp-q4: draft head over 59607 tokens as Q4_0 (81.9 MiB read per step, was 119.4)
+  strata serve: STRATA_ADAPT_OVERLAP=1 is off: not in the resident RAM mode unless STRATA_ADAPT_OVERLAP_RESIDENT=1
+  strata serve: 734 MiB of VRAM free with everything loaded
+  strata verify: capturing the 4-token window (694 MiB of VRAM free)
+  strata verify: capturing the 1-token window (626 MiB of VRAM free)
+  strata verify: capturing the 3-token window (606 MiB of VRAM free)
+  strata verify: capturing the 2-token window (604 MiB of VRAM free)
+  strata verify: capturing the 6-token window (602 MiB of VRAM free)
+  strata verify: capturing the 5-token window (598 MiB of VRAM free)
+  strata serve: decode expert cache hit rate: 77.9% (929001 hits / 1192800 lookups)
+  strata serve: resident RAM: 37.12 GiB of experts in RAM, 2945 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 61490.3 MB from storage (572 major faults) for 12396.3 MB of expert reads; page cache held 36777.4 MB at the read, not 3076.6 MB; io prefetch: 0 read ahead (3275.8 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.10 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 963 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)

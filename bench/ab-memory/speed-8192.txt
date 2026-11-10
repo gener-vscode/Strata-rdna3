@@ -1,0 +1,3 @@
+Quick speed check. For results other people can compare with (the standard benchmark, a few minutes), run: .venv/bin/python strata.py bench run
+
+No Strata model is set up in this folder: run START-HERE.bat (Windows) or ./setup.sh (Linux) first, or give --url of a running server.
