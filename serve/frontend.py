@@ -912,7 +912,13 @@ class _RawValue:
     A character goes out only once nothing that can still arrive can change what has already gone
     out: after a closed string, after a structural character, or after a scalar a delimiter has
     confirmed.  The whitespace between tokens is dropped, which is what `json.dumps` drops too, so
-    the pieces concatenated parse to the same value as the whole."""
+    the pieces concatenated parse to the same value as the whole.
+
+    Nothing here tracks the value's own brackets to find where it ends.  A model writing a long
+    markdown argument closes its quotes badly (an unescaped `"` is common), and a brace in a code
+    block then ends a bracket count early; a flag set from that count held the rest of the answer
+    back for the whole generation, which is the silence this class exists to remove.  `param_end`
+    is the authority on where the value ends, and the caller cuts the text at it before calling."""
 
     WS = " \n\r\t"
     DELIM = " \n\r\t,]}:"
@@ -920,18 +926,14 @@ class _RawValue:
 
     def __init__(self):
         self.str = False        # inside a JSON string; escapes are matched whole, so nothing else
-        self.depth = 0          # nesting of the value's own brackets
-        self.done = False       # the value closed: nothing after it in the buffer is its text
 
     def piece(self, text: str, final: bool = False) -> tuple[int, str]:
-        """(characters of `text` consumed, the text to send now).  `final` means the value is over:
-        it takes all of `text`, because nothing can arrive after it to change its meaning.  It drops
-        the whitespace between tokens either way, so a value that arrives all at once leaves the
-        stream exactly as one that arrives token by token.  Once the value has closed, nothing more of
-        `text` is its text and nothing more leaves the stream: `param_end` confirms the end as before,
-        so a closing tag can never reach the client as part of the arguments."""
-        if self.done:
-            return 0, ""
+        """(characters of `text` consumed, the text to send now).  `text` is only ever the part of the
+        buffer the caller has decided is the value's own text: it never contains `</parameter>`, so
+        nothing here has to look for the end.  `final` means the value is over: it takes all of
+        `text`, because nothing can arrive after it to change its meaning.  It drops the whitespace
+        between tokens either way, so a value that arrives all at once leaves the stream exactly as
+        one that arrives token by token."""
         out: list[str] = []
         i = 0
         n = len(text)
@@ -971,13 +973,6 @@ class _RawValue:
             if c in "{[]},:":                       # every JSON structural character; this set must
                 out.append(c)                       # cover DELIM, or the scalar below would stop
                 i += 1                              # on it without consuming it and never advance
-                if c in "{[":
-                    self.depth += 1
-                elif c in "}]":                     # only a closing bracket ends nesting; a comma or
-                    self.depth -= 1                 # a colon is a boundary too, but it must not close
-                    if self.depth <= 0:             # the value, or it would be cut short at the first
-                        self.done = True            # one of them
-                        return i, "".join(out)      # the value is whole: stop before its closer
                 if not final:
                     return i, "".join(out)          # a structural character is a boundary
                 continue
@@ -1328,10 +1323,13 @@ class OutputParser:
                         continue
                     if not isinstance(self.sraw, _RawValue):
                         return out                  # not JSON: wait for it to be whole, as before
-                    # Stop short of a suffix that could still become </parameter>.  Until param_end
-                    # resolves it, that text is not part of the value: without this the scanner
-                    # would read the `<` as a scalar and send the closing tag as arguments.
-                    n, piece = self.sraw.piece(rest[:len(rest) - self._hold(rest, (PARAM_END,))])
+                    # Cut at the end param_end will confirm: a candidate whose follower has not arrived
+                    # is held from its start, otherwise a suffix that could still become </parameter>.
+                    # Without this the scanner would read the `<` as a scalar and send the closing tag
+                    # to the client as part of the arguments.
+                    cut = (rest.find(PARAM_END) if end == -2
+                           else len(rest) - self._hold(rest, (PARAM_END,)))
+                    n, piece = self.sraw.piece(rest[:cut])
                     args(piece)
                     self.sp += n
                     if n:
@@ -1368,8 +1366,15 @@ class OutputParser:
             # The value's own brackets are already on the wire and the output ended inside it: send
             # the rest of it and leave the object open, so the pieces still do not parse as
             # arguments - the client must be able to tell this from a call it can run (#211).
+            # Cut at the end param_end sees, exactly as _scan does: a candidate with no follower is
+            # the end once the output is over, and without the cut the scanner would read the `<` as
+            # a scalar and send the closing tag to the client as arguments.  A `</parameter>` that
+            # names no follower is skipped, so a value may still document the call format (#210).
             tail = self.buf[self.sp:]
-            n, piece = self.sraw.piece(tail[:len(tail) - self._hold(tail, (PARAM_END,))], final=True)
+            at = param_end(tail, final=True)
+            if at < 0:
+                at = len(tail) - self._hold(tail, (PARAM_END,))
+            n, piece = self.sraw.piece(tail[:at], final=True)
             self.sp += n
             self.ss = "done"
             if piece:

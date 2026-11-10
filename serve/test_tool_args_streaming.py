@@ -23,7 +23,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from serve.frontend import ChatTemplate, OutputParser  # noqa: E402
+from serve.frontend import PARAM_END, ChatTemplate, OutputParser  # noqa: E402
 from serve.server import ByteTokenizer, MockEngine, Service, serve  # noqa: E402
 from serve.test_server import CTX  # noqa: E402
 
@@ -208,6 +208,41 @@ class OverHttp(unittest.TestCase):
                   if e.get("type") == "content_block_delta" and e["delta"]["type"] == "input_json_delta"]
         self.assertGreater(len(pieces), 20, "the array came as one delta")
         self.assertEqual(json.loads("".join(pieces)), ARGS)
+
+
+class AMalformedValueKeepsStreaming(unittest.TestCase):
+    """A long markdown argument is where this broke in the field.  The model writes an unescaped "
+    inside the string, so the string ends early, and a brace in a code block then closes the value
+    early.  The parser used to take that as the value's end and hold the rest of the answer back for
+    the whole generation - the progress line's streamed count sat still for 40 seconds while the
+    engine wrote another 1600 tokens.  The value's text is everything up to the end `param_end`
+    confirms, so the stream must keep moving however badly the model closes its braces."""
+
+    TAIL = "the quick brown fox jumps over the lazy dog. " * 120
+    VALUE = '{"markdown": "ends in numbers and code refs."}\n{"markdown": "' + TAIL + '"}'
+    TEXT = ("<tool_call>\n<function=readFiles>\n<parameter=items>\n" + VALUE +
+            "\n</parameter>\n</function>\n</tool_call>")
+
+    def test_the_rest_still_leaves_the_stream(self):
+        for step in (1, 17, 4096):
+            with self.subTest(step=step):
+                pieces = "".join(streamed(run(self.TEXT, step)))
+                self.assertGreater(len(pieces), len(self.VALUE) * 3 // 4,
+                                   "the stream froze: %d of %d characters" % (len(pieces), len(self.VALUE)))
+
+    def test_the_closing_tag_never_reaches_the_client(self):
+        for step in (1, 17, 4096):
+            with self.subTest(step=step):
+                self.assertNotIn(PARAM_END, "".join(streamed(run(self.TEXT, step))))
+
+    def test_the_call_still_decodes_as_a_malformed_value(self):
+        """The non-streamed answer is untouched: a value that is not JSON stays the text it was."""
+        for step in (1, 17, 4096):
+            with self.subTest(step=step):
+                evs = run(self.TEXT, step)
+                calls = [e.call for e in evs if e.kind == "tool_call"]
+                self.assertEqual([c.arguments for c in calls],
+                                 [{"items": self.VALUE.strip("\n")}])
 
 
 if __name__ == "__main__":
