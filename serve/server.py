@@ -5051,6 +5051,11 @@ class Service:
                     s["phase"], s["tool"] = f"writing a tool call: {ev.call.name}", ev.call.name
                 elif ev.kind == "tool_call":
                     s["phase"] = "tool call complete"
+                # What has actually left the stream, against what the engine has written: the gap is content
+                # held back (a tag half-arrived, or an argument being built), which is what a silent stream
+                # looks like from the client's side. The kinds are those the SSE handlers turn into deltas.
+                if ev.kind in ("content", "reasoning", "tool_args"):
+                    s["streamed"] = s.get("streamed", 0) + len(ev.text or "")
                 s["tail"] = ((s.get("tail") or "") + (ev.text or ""))[-600:]
 
     def _progress(self, last_print, every=1.0, st=None):
@@ -5070,8 +5075,11 @@ class Service:
             # #984: while a thinking budget applies, the thinking line shows it, not the request's max_tokens
             limit = (f"budget {s['thinking_budget']} (max {s.get('max_tokens')})"
                      if s["phase"] == "thinking" and s.get("thinking_budget") else f"max {s.get('max_tokens')}")
+            # the last 32 characters on the wire, escaped so one line stays one line in journald: a tool call's
+            # JSON is written across newlines, and an unescaped tail would split the progress line
+            tail = (s.get("tail") or "")[-32:].replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
             print(f"[strata] {s['phase']}: {s['generated']} of {limit} tokens, {rate:.1f} tok/s, "
-                  f"{el:.0f} s", flush=True)
+                  f"{el:.0f} s, {s.get('streamed', 0)} chars streamed: ...{tail}", flush=True)
         return now
 
     def run(self, ids, thinking, tools, max_new, sampling, cancel, force=None,
@@ -5177,6 +5185,10 @@ class Service:
         par = bool(getattr(self.engine, "batch", 0))
         st = {} if par else self.status
         rate = collections.deque(maxlen=32) if par else self.rate
+        with self.status_lock:
+            # one at a time st IS self.status, which lives across requests: a count of what streamed has to
+            # start at zero with this one, or the line below would carry the last request's total forward
+            st["streamed"] = 0
         request_id = uuid.uuid4().hex[:12]
         setattr(cancel, "_strata_request_id", request_id)
         deadline = time.monotonic() + self.queue_timeout_s if self.queue_timeout_s is not None else None
