@@ -39,6 +39,8 @@
     "224000",
     "--kv",
     "q4_0",
+    "--kv-resident",
+    "32768",
     "--ple-io",
     "direct",
     "--stats",
