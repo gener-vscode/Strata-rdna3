@@ -336,8 +336,10 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
   // a model split across several cards (issue #112): the cards show their total / mean / hottest, and each card's own
   const per = (f) => (hw.gpus || []).map((g) => `GPU ${g.index} ${f(g)}`).join(" · ");
   const multi = (hw.gpus || []).length > 1;
+  const link = pcieLink(hw);
   setMetric("gpuLoad", hw.gpu_util == null ? null : fmt(hw.gpu_util), "%",
-    multi ? per((g) => (g.util == null ? "–" : `${fmt(g.util)}%`)) : st.gpu_name || (st.gpu_note ? "not available" : ""));
+    multi ? per((g) => (g.util == null ? "–" : `${fmt(g.util)}%`))
+      : st.gpu_name ? `${st.gpu_name}${link ? ` (${link})` : ""}` : (st.gpu_note ? "not available" : ""));
   spark("sp-gpuLoad", h.gpu_util, 100);
   setMetric("gpuTemp", hw.gpu_temp == null ? null : fmt(hw.gpu_temp), "°C",
     multi ? per((g) => (g.temp == null ? "–" : `${fmt(g.temp)}°`)) : "");
@@ -423,6 +425,13 @@ function projectionText(c) {
          `${single ? ` (layer ${single.replace("single", "")}'s direction)` : ""}. Per chat in Sampling. Its package ` +
          "describes the vector as a refusal-direction projection; measure the speed yourself";
 }
+// The PCIe link the card runs at, as it used to sit in its own tile: the rated generation and width. The
+// generation drops at idle on NVML cards to save power, so the rated one leads and the live one is the fallback.
+function pcieLink(hw) {
+  const gen = hw.gpu_pcie_gen_max || hw.gpu_pcie_gen;
+  return gen ? `Gen${gen}${hw.gpu_pcie_width ? ` x${hw.gpu_pcie_width}` : ""}` : "";
+}
+
 function renderAbout(eng, hw, st) {
   const kv = {int8: "8-bit", q4_0: "4-bit (Hadamard-rotated)", fp16: "16-bit"}[eng.kv] || eng.kv;
   facts($("facts-engine"), [
@@ -435,8 +444,11 @@ function renderAbout(eng, hw, st) {
     ["Images", eng.images ? "on" : "off"],
     ["Experimental speed projection", projectionText(eng.cvec)],
   ]);
+  const gpuLink = pcieLink(hw);
   facts($("facts-hw"), [
-    ["GPU", st.gpu_name ? `${st.gpu_name}${hw.gpu_mem_total ? `, ${gb(hw.gpu_mem_total, 0)} GB` : ""}` : (st.gpu_note || "not readable (NVML)")],
+    ["GPU", st.gpu_name
+      ? `${st.gpu_name}${hw.gpu_mem_total ? `, ${gb(hw.gpu_mem_total, 0)} GB` : ""}${gpuLink ? ` (${gpuLink})` : ""}`
+      : (st.gpu_note || "not readable (NVML)")],
     ["CPU", st.cpu_name ? `${st.cpu_name}${st.threads ? `, ${st.threads} threads` : ""}` : null],
     ["RAM", hw.ram_total ? `${gb(hw.ram_total, 0)} GB` : null],
   ]);
