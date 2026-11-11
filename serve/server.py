@@ -3882,6 +3882,7 @@ class Service:
         self.effort_end = False
         self.conv_log = ConvCacheLog()                  # #596: the parked conversations, from the engine's log
         self.config_path = None                         # #564: the run config the web page's Settings view edits
+        self._tiles = None                              # its "tiles" (the Monitor's tile order), read once
         self.config_lock = threading.Lock()
         # #321: browser pages of these origins may call /v1/* (CORS; "*" = any page - only with an api_key that
         # matters); empty = no CORS headers at all, as before
@@ -4685,8 +4686,24 @@ class Service:
         return {"engine": engine, "live": live, "requests": hist[::-1][:None if all_requests else 12],
                 "conversation_cache": conversation_cache_view(engine, hist, totals, parked),
                 "requests_kept": len(hist), "totals": totals, "hardware": tel["now"],
-                "hardware_static":
-                tel["static"], "history": tel["history"], "time": now}
+                "hardware_static": tel["static"], "history": tel["history"], "time": now,
+                "tiles": self.tiles_view()}
+
+    def tiles_view(self) -> list:
+        """The run config's "tiles": the order of the Monitor's metric tiles, read once.
+        The page drops names it does not know and appends any it left out, so a typo can never hide a tile;
+        no key and no run config means the page's own default order, which is the same one."""
+        if self._tiles is None:
+            tiles = []
+            if self.config_path:
+                try:
+                    t = runconfig.load(self.config_path).get("tiles")
+                    if isinstance(t, list):
+                        tiles = [x for x in t if isinstance(x, str)]
+                except (OSError, ValueError):
+                    pass                        # an unreadable config: the page keeps its own order
+            self._tiles = tiles
+        return self._tiles
 
     def prometheus(self) -> str:
         """GET /metrics/prometheus: the totals and what is running in Prometheus' text format, under llama-server's
