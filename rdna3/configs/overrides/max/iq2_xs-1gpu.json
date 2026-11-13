@@ -1,0 +1,10 @@
+{
+  "args": {
+    "--conversation-cache-mib": "0",
+    "--conversation-cache-slots": "0",
+    "--max-context": "160000"
+  },
+  "env": {
+    "STRATA_PREFILL_AUTO_MAX": "24000"
+  }
+}
