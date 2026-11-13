@@ -114,7 +114,11 @@
 
       <div class="monitor-top">
         <div class="st-card ctx-card">
-          <span class="card-title">Context fill</span>
+          <span class="card-title justify-between">
+            <span>Experts</span><span class="muted" id="slots-text">&ndash;</span>
+          </span>
+
+          <!-- <span class="card-title">Context fill</span> -->
           <div class="ctx-gauge">
             <svg class="st-gauge" viewBox="0 0 120 120" aria-hidden="true">
               <circle class="st-gauge__track" cx="60" cy="60" r="50" fill="none" stroke-width="10" stroke-linecap="round"
@@ -126,12 +130,6 @@
           </div>
           <div class="ctx-bars">
             <div class="ctx-bar">
-              <div class="bar-row"><span>Experts in VRAM</span><span class="muted" id="slots-text">&ndash;</span></div>
-              <div class="st-progress">
-                <div class="st-progress__bar" id="slots-bar" style="width:0%"></div>
-              </div>
-            </div>
-            <div class="ctx-bar">
               <div class="bar-row"><span>System RAM</span><span class="muted" id="ram-text">&ndash;</span></div>
               <div class="st-progress" id="ram-progress">
                 <div class="st-progress__bar" id="ram-bar" style="width:0%"></div>
@@ -141,6 +139,12 @@
               <div class="bar-row" id="vram-row"><span>VRAM</span><span class="muted" id="vram-text">&ndash;</span></div>
               <div class="st-progress" id="vram-progress">
                 <div class="st-progress__bar" id="vram-bar" style="width:0%"></div>
+              </div>
+            </div>
+            <div class="ctx-bar" id="swap-ctx">
+              <div class="bar-row" id="swap-row"><span>Swap</span><span class="muted" id="swap-text">&ndash;</span></div>
+              <div class="st-progress" id="swap-progress">
+                <div class="st-progress__bar" id="swap-bar" style="width:0%"></div>
               </div>
             </div>
           </div>

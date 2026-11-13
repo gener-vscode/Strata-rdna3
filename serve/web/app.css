@@ -8,7 +8,19 @@ main { flex: 1; min-height: 0; display: flex; }
 .view[hidden] { display: none; }
 .muted { color: var(--st-ink-muted); }
 .small { font-size: var(--st-fs-xs); }
-.card-title { font-weight: var(--st-fw-bold); font-size: var(--st-fs-base); color: var(--st-ink); }
+.card-title {
+  font-weight: var(--st-fw-bold);
+  font-size: var(--st-fs-base);
+  color: var(--st-ink);
+}
+
+/* a title with a value at the far end of the row, as the expert card's header does */
+.justify-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--st-s-2);
+}
 .st-header { position: relative; z-index: 2; flex: none; }
 .st-header .st-tabs { margin-left: var(--st-s-4); }
 #drawer-close .st-icon { transform: rotate(-90deg); }
@@ -129,10 +141,11 @@ main { flex: 1; min-height: 0; display: flex; }
   display: contents;
 }
 
-/* the three bar groups are the card's own rows */
+/* the bar groups are the card's own rows */
 .ctx-bar {
   display: flex;
   flex-direction: column;
+  gap: 4px;
 }
 
 .ctx-bar .bar-row {

@@ -526,6 +526,105 @@ class _CpuRamFallback:
         except (OSError, KeyError, ValueError):
             return None, None
 
+    @staticmethod
+    def swap_total():
+        """The machine's swap space, bytes, from /proc/meminfo; None where there is no procfs (macOS, Windows
+        without psutil) or the box has none at all."""
+        try:
+            info = dict(line.split(":", 1) for line in open("/proc/meminfo"))
+            return int(info["SwapTotal"].split()[0]) * 1024
+        except (OSError, KeyError, ValueError):
+            return None
+
+
+# ------------------------------------------------------------------------------------------------ swap of the run itself
+def _vm_swap(proc, pid):
+    """The swap one process holds, bytes, from its /proc status line; None when it cannot be read."""
+    try:
+        with open(os.path.join(proc, str(pid), "status")) as f:
+            for line in f:
+                if line.startswith("VmSwap:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, IndexError, ValueError):
+        pass
+    return None
+
+
+def _child_pids(proc, pid):
+    """The processes `pid` started, from its threads' `children` files.  The engine and the vision server are
+    children of the server, which is how the run's swap is found without having to know their names."""
+    try:
+        threads = os.listdir(os.path.join(proc, str(pid), "task"))
+    except OSError:
+        return []
+    out = []
+    for t in threads:
+        try:
+            with open(os.path.join(proc, str(pid), "task", t, "children")) as f:
+                out += [int(x) for x in f.read().split()]
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def tree_swap(pid=None, proc="/proc", ps=None):
+    """The swap this process and every process below it hold, in bytes; None where it cannot be read at all.
+    The Monitor wants the run's own swap and not the machine's: another program swapping says nothing about
+    Strata, while Strata swapping is exactly what makes a request crawl - and under a `MemorySwapMax=` cap it
+    is the run's figure, not the machine's, that runs out.  Windows and macOS have no /proc, so there
+    psutil's per-process swap is summed over the same tree instead."""
+    pid = pid if pid is not None else os.getpid()
+    if os.path.isdir(os.path.join(proc, str(pid))):
+        total, seen, stack, done = 0, False, [pid], set()
+        while stack:
+            p = stack.pop()
+            if p in done:
+                continue
+            done.add(p)
+            v = _vm_swap(proc, p)
+            if v is not None:
+                total += v
+                seen = True
+            stack += [k for k in _child_pids(proc, p) if k not in done]
+        return total if seen else None
+    if ps is None:
+        return None
+    try:
+        me = ps.Process(pid)
+        procs = [me] + me.children(recursive=True)
+    except (OSError, RuntimeError, AttributeError):        # a stubbed psutil in a test
+        return None
+    total, seen = 0, False
+    for p in procs:
+        try:
+            v = getattr(p.memory_full_info(), "swap", None)
+        except (OSError, RuntimeError):
+            continue
+        if v is not None:
+            total += v
+            seen = True
+    return total if seen else None
+
+
+def cgroup_swap_limit(proc="/proc", root="/sys/fs/cgroup"):
+    """The swap ceiling on this process's cgroup v2, in bytes; None when nothing is set (`max`) or there is no
+    cgroup v2.  Under strata.service this is the `MemorySwapMax=` cap, so the bar is drawn against what the run
+    is actually allowed rather than against the whole machine's swap."""
+    try:
+        with open(os.path.join(proc, "self", "cgroup")) as f:
+            line = next((l for l in f if l.startswith("0::")), None)
+    except OSError:
+        return None
+    p = line.split("::", 1)[1].strip() if line else ""
+    if not p or p == "/":
+        return None
+    try:
+        with open(os.path.join(root, p.lstrip("/"), "memory.swap.max")) as f:
+            v = f.read().strip()
+    except OSError:
+        return None
+    return None if v == "max" else int(v)
+
 
 # ------------------------------------------------------------------------------------------------ the sampler
 class Telemetry:
@@ -599,6 +698,21 @@ class Telemetry:
         dt = t - prev[0]
         return (c.read_bytes - prev[1]) / dt / 2**20, (c.write_bytes - prev[2]) / dt / 2**20
 
+    def _swap(self):
+        """(swap the run itself holds, the machine's swap, the run's own ceiling) in bytes; any of them None
+        when it cannot be read.  The Monitor draws the bar against the ceiling, which is a `MemorySwapMax=`
+        cap when the run is a capped service and the machine's swap otherwise - the run can be at its ceiling
+        while the box still has swap free, and it is the ceiling it stalls on."""
+        return tree_swap(ps=self.ps), self._swap_total(), cgroup_swap_limit()
+
+    def _swap_total(self):
+        if self.ps:
+            try:
+                return self.ps.swap_memory().total
+            except (OSError, RuntimeError, AttributeError):      # a stubbed psutil in a test
+                pass
+        return self.fallback.swap_total()
+
     def sample(self):
         s = {}
         if self.gpu.ok():
@@ -629,6 +743,7 @@ class Telemetry:
             s["cpu"] = self.fallback.cpu()
             s["ram_used"], s["ram_total"] = self.fallback.ram()
         s["disk_read_mb"], s["disk_write_mb"] = self._disk()
+        s["strata_swap"], s["swap_total"], s["swap_limit"] = self._swap()
         if self.extra:
             try:
                 s.update(self.extra())
