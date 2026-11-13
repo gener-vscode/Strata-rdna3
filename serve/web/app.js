@@ -121,31 +121,43 @@ async function loadHealth() {
 }
 
 // ------------------------------------------------------------------ Monitor
-const METRICS = [
-  {key: "speed", label: "Speed", icon: "gauge", unit: "t/s", series: "tok_s"},
-  {key: "gpu", label: "GPU load", icon: "gpu", unit: "%", series: "gpu_util", max: 100},
-  {key: "vram", label: "VRAM", icon: "layers", unit: "GB", series: "gpu_mem_used"},
-  {key: "temp", label: "GPU temp", icon: "thermometer", unit: "°C", series: "gpu_temp", tone: "warn"},
-  {key: "power", label: "Power", icon: "bolt", unit: "W", series: "gpu_power"},
-  {key: "pcie", label: "PCIe", icon: "link", unit: "", series: "gpu_pcie_rx_mb", tone: "info"},
-  {key: "cpu", label: "CPU", icon: "cpu", unit: "%", series: "cpu", max: 100},
-  {key: "disk", label: "Disk read", icon: "disk", unit: "MB/s", series: "disk_read_mb", tone: "info"},
-];
-$("metrics").innerHTML = METRICS.map((m) => `
+// Six tiles, three columns wide, beside the Context fill card. VRAM is a bar inside that card now (it competes
+// with the expert cache shown right under it), and the PCIe link is a wiring detail nobody watches day to day.
+// The run config's "tiles" lists these names in the order to show them, so the number you care about most can
+// go top left. Names the file does not know are dropped and any it left out go at the end, so a typo can never
+// hide a tile. This order is the default, and it is what the shipped configs ask for.
+const TILE = {
+  speed: { label: "Speed", icon: "gauge", unit: "t/s" },
+  gpuLoad: { label: "GPU load", icon: "gpu", unit: "%", max: 100 },
+  gpuTemp: { label: "GPU temp", icon: "thermometer", unit: "°C", tone: "warn" },
+  power: { label: "Power", icon: "bolt", unit: "W" },
+  cpuLoad: { label: "CPU", icon: "cpu", unit: "%", max: 100 },
+  diskRead: { label: "Disk read", icon: "disk", unit: "MB/s", tone: "info" },
+};
+const TILES_DEFAULT = ["speed", "gpuLoad", "power", "diskRead", "cpuLoad", "gpuTemp"];
+let tileOrder = TILES_DEFAULT;
+function buildTiles(order) {
+  tileOrder = [...new Set([...(order || []).filter((k) => TILE[k]), ...TILES_DEFAULT])];
+  $("metrics").innerHTML = tileOrder.map((k) => {
+    const m = TILE[k];
+    return `
   <div class="st-card metric-card"><div class="st-metric">
     <span class="st-metric__label">${icon(m.icon, "st-icon st-icon--sm")}${esc(m.label)}</span>
-    ${m.key === "speed" ? `<div class="speed-values">
+    ${k === "speed" ? `<div class="speed-values">
       <div><span class="st-metric__value" id="mv-speed">-</span><span class="st-metric__sub" id="ms-speed">Decode</span></div>
       <div class="speed-prefill"><span class="st-metric__value" id="mv-prefill">-</span><span class="st-metric__sub" id="ms-prefill">Prefill</span></div>
-    </div>` : `<span class="st-metric__value" id="mv-${m.key}">–</span>
-    <span class="st-metric__sub" id="ms-${m.key}"></span>`}
-    <svg class="st-metric__spark" id="sp-${m.key}" viewBox="0 0 100 32" preserveAspectRatio="none"${m.tone ? ` data-tone="${m.tone}"` : ""}>
+    </div>` : `<span class="st-metric__value" id="mv-${k}">–</span>
+    <span class="st-metric__sub" id="ms-${k}"></span>`}
+    <svg class="st-metric__spark" id="sp-${k}" viewBox="0 0 100 32" preserveAspectRatio="none"${m.tone ? ` data-tone="${m.tone}"` : ""}>
       <path class="area" fill="currentColor" opacity=".12"/><path class="line" fill="none" stroke="currentColor"
       stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
-      ${m.key === "speed" ? `<g id="sp-prefill" class="speed-prefill"><path class="area" fill="currentColor" opacity=".12"/>
+      ${k === "speed" ? `<g id="sp-prefill" class="speed-prefill"><path class="area" fill="currentColor" opacity=".12"/>
         <path class="line" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"
         stroke-linecap="round" vector-effect="non-scaling-stroke"/></g>` : ""}</svg>
-  </div></div>`).join("");
+  </div></div>`;
+  }).join("");
+}
+buildTiles(TILES_DEFAULT);
 
 function spark(id, values, max) {
   const svg = $(id);
@@ -164,21 +176,38 @@ function setMetric(key, value, unit, sub) {
 
 let lastMetrics = null, metricsFailures = 0, keyWarned = false, mcpTick = 0;
 let reqShowAll = false;   // the Monitor's request table: the last 12, or every one the server keeps (issue #35)
+// A PC that went to sleep or lost its network keeps the connection open until the browser gives up (tens of
+// seconds, which is what net::ERR_CONNECTION_TIMED_OUT is), and this loop waits for each request. So one poll is
+// given METRICS_TIMEOUT ms, and OFFLINE_AFTER failed polls in a row veil the page.
+const METRICS_TIMEOUT = 4000;
+const OFFLINE_AFTER = 3;
+function timedFetch(url, ms, opts = {}) {
+  const c = new AbortController();
+  const giveUp = setTimeout(() => c.abort(), ms);
+  return fetch(url, {...opts, signal: c.signal}).finally(() => clearTimeout(giveUp));
+}
 async function poll() {
   try {
-    const r = await fetch(reqShowAll ? "metrics?requests=all" : "metrics", {headers: headers()});
-    if (r.status === 401) {
+    const r = await timedFetch(reqShowAll ? "metrics?requests=all" : "metrics", METRICS_TIMEOUT, {headers: headers()});
+    if (r.status === 401) {                     // reachable, just needing a key: the veil must not cover it
+      metricsFailures = 0;
+      setOffline(false);
       setPill("error", "API key needed");
       if (!keyWarned) { keyWarned = true; toast("warn", "API key needed", "This server needs a key: add it under About > Settings.", 6000); }
     } else if (r.ok) {
       lastMetrics = await r.json();
       metricsFailures = 0;
+      setOffline(false);
+      // the run config's "tiles" sets the order; rebuilding clears the sparklines, so only do it when it changes
+      if (lastMetrics.tiles && lastMetrics.tiles.join() !== tileOrder.join()) buildTiles(lastMetrics.tiles);
       render(lastMetrics);
     } else {
       throw new Error(`HTTP ${r.status}`);
     }
   } catch (e) {
-    if (++metricsFailures === 3) setPill("error", "Server not reachable");
+    // >= and not ==: a connection that breaks and half-recovers must still end up veiled, and re-asserting an
+    // already veiled page is one assignment
+    if (++metricsFailures >= OFFLINE_AFTER) { setPill("error", "Server not reachable"); setOffline(true); }
   }
   if (tab === "monitor" && ++mcpTick % 10 === 0) loadMcp();       // server states change rarely: every 10 s
   setTimeout(poll, 1000);
@@ -188,6 +217,23 @@ function setPill(state, text) {
   $("pill").dataset.state = state === "error" ? "queued" : state;
   $("pill-text").textContent = text;
 }
+
+// The pill alone is easy to miss: while the server is not answering, everything under the header is covered by a
+// dark veil (the header stays clickable, so the tabs and the theme button keep working). It lifts on the first
+// metrics response back, i.e. as soon as Strata is started again.
+function setOffline(on) {
+  const veil = $("offline");
+  if (!veil) return;                       // a page loaded from an older server has no veil to show
+  if (on) {                                // measured, so the veil starts under the header at any width
+    const h = Math.round(document.querySelector(".st-header").getBoundingClientRect().height) || 60;
+    document.documentElement.style.setProperty("--st-header-h", `${h}px`);
+  }
+  veil.hidden = !on;
+}
+// The browser knows a network is gone long before a request to it runs into the timeout above. The poll loop keeps
+// running either way, so starting Strata again lifts the veil without reloading.
+window.addEventListener("offline", () => { setPill("error", "Network not reachable"); setOffline(true); });
+window.addEventListener("online", () => { metricsFailures = 0; setOffline(false); });
 
 function render(m) {
   const live = m.live || {}, hw = m.hardware || {}, st = m.hardware_static || {}, eng = m.engine || {}, h = m.history || {};
@@ -277,7 +323,7 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
   $("state-detail").textContent = detail;
   $("state-bar").style.width = `${pct}%`;
 
-  // the eight cards
+  // the six tiles
   const speed = live.state === "generating" ? live.tok_s : last ? last.decode_tok_s : null;
   setMetric("speed", speed == null ? null : fmt(speed, 1), "t/s",
             live.state === "generating" ? "Decode now" : last ? "Decode last request" : "Decode");
@@ -290,33 +336,26 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
   // a model split across several cards (issue #112): the cards show their total / mean / hottest, and each card's own
   const per = (f) => (hw.gpus || []).map((g) => `GPU ${g.index} ${f(g)}`).join(" · ");
   const multi = (hw.gpus || []).length > 1;
-  setMetric("gpu", hw.gpu_util == null ? null : fmt(hw.gpu_util), "%",
-            multi ? per((g) => (g.util == null ? "–" : `${fmt(g.util)}%`)) : st.gpu_name || (st.gpu_note ? "not available" : ""));
-  spark("sp-gpu", h.gpu_util, 100);
-  setMetric("vram", hw.gpu_mem_used == null ? null : gb(hw.gpu_mem_used), hw.gpu_mem_total ? `/ ${gb(hw.gpu_mem_total, 0)} GB` : "GB",
-            multi ? per((g) => (g.mem_used == null ? "–" : `${gb(g.mem_used)} GB`))
-                  : eng.expert_slots ? `${fmt(eng.expert_slots)} experts cached` : (st.gpu_note ? "not available on Windows AMD yet" : ""));
-  spark("sp-vram", h.gpu_mem_used, hw.gpu_mem_total);
-  setMetric("temp", hw.gpu_temp == null ? null : fmt(hw.gpu_temp), "°C",
-            multi ? per((g) => (g.temp == null ? "–" : `${fmt(g.temp)}°`)) : "");
-  spark("sp-temp", h.gpu_temp, 90);
+  const link = pcieLink(hw);
+  setMetric("gpuLoad", hw.gpu_util == null ? null : fmt(hw.gpu_util), "%",
+    multi ? per((g) => (g.util == null ? "–" : `${fmt(g.util)}%`))
+      : st.gpu_name ? `${st.gpu_name}${link ? ` (${link})` : ""}` : (st.gpu_note ? "not available" : ""));
+  spark("sp-gpuLoad", h.gpu_util, 100);
+  setMetric("gpuTemp", hw.gpu_temp == null ? null : fmt(hw.gpu_temp), "°C",
+    multi ? per((g) => (g.temp == null ? "–" : `${fmt(g.temp)}°`)) : "");
+  spark("sp-gpuTemp", h.gpu_temp, 90);
   setMetric("power", hw.gpu_power == null ? null : fmt(hw.gpu_power), "W", hw.gpu_power_limit ? `of ${fmt(hw.gpu_power_limit)} W limit` : "");
   spark("sp-power", h.gpu_power, hw.gpu_power_limit);
-  const gen = hw.gpu_pcie_gen_max || hw.gpu_pcie_gen;
-  setMetric("pcie", gen ? `Gen${gen}` : null, hw.gpu_pcie_width ? `x${hw.gpu_pcie_width}` : "",
-            hw.gpu_pcie_rx_mb == null ? "" : `to GPU ${fmt(hw.gpu_pcie_rx_mb, hw.gpu_pcie_rx_mb < 10 ? 1 : 0)} MB/s` +
-            (hw.gpu_pcie_gen && gen && hw.gpu_pcie_gen < gen ? ` · idle Gen${hw.gpu_pcie_gen}` : ""));
-  spark("sp-pcie", h.gpu_pcie_rx_mb);
-  setMetric("cpu", hw.cpu == null ? null : fmt(hw.cpu), "%", st.threads ? `${st.cores ? `${st.cores} cores · ` : ""}${st.threads} threads` : "");
-  spark("sp-cpu", h.cpu, 100);
+  setMetric("cpuLoad", hw.cpu == null ? null : fmt(hw.cpu), "%", st.threads ? `${st.cores ? `${st.cores} cores · ` : ""}${st.threads} threads` : "");
+  spark("sp-cpuLoad", h.cpu, 100);
   if (hw.disk_read_mb == null) {
-    setMetric("disk", null, "", st.psutil ? "" : "needs psutil (setup installs it)");
+    setMetric("diskRead", null, "", st.psutil ? "" : "needs psutil (setup installs it)");
   } else {
     const big = hw.disk_read_mb >= 1000;
-    setMetric("disk", big ? fmt(hw.disk_read_mb / 1024, 2) : fmt(hw.disk_read_mb, hw.disk_read_mb < 10 ? 1 : 0), big ? "GB/s" : "MB/s",
-              hw.disk_write_mb == null ? "" : `write ${fmt(hw.disk_write_mb, 1)} MB/s`);
+    setMetric("diskRead", big ? fmt(hw.disk_read_mb / 1024, 2) : fmt(hw.disk_read_mb, hw.disk_read_mb < 10 ? 1 : 0), big ? "GB/s" : "MB/s",
+      hw.disk_write_mb == null ? "" : `write ${fmt(hw.disk_write_mb, 1)} MB/s`);
   }
-  spark("sp-disk", h.disk_read_mb);
+  spark("sp-diskRead", h.disk_read_mb);
 
   // context fill: the running request, else the last one
   const ctx = eng.max_context || 0;
@@ -329,14 +368,30 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
   $("ctx-pct").textContent = `${Math.round(frac * 100)}%`;
   $("ctx-sub").textContent = ctx ? `${kfmt(used)} / ${ctxfmt(ctx)}` : "–";
   const cacheBytes = (eng.expert_cache_mib || 0) * 1048576;
-  $("slots-text").textContent = eng.expert_slots ? `${fmt(eng.expert_slots)} · ${gb(cacheBytes)} GB` : "–";
-  $("slots-bar").style.width = hw.gpu_mem_total ? `${Math.min(100, (100 * cacheBytes) / hw.gpu_mem_total)}%` : "0%";
+  $("slots-text").textContent = eng.expert_slots ? `${fmt(eng.expert_slots)} (${gb(cacheBytes)}GB)` : "–";
   $("ram-text").textContent = hw.ram_total ? `${gb(hw.ram_used)} / ${gb(hw.ram_total, 0)} GB` : "–";
   const ramPct = hw.ram_total ? (100 * hw.ram_used) / hw.ram_total : 0;
   $("ram-bar").style.width = `${ramPct}%`;
   if (ramPct > 92) $("ram-progress").dataset.tone = "danger"; else delete $("ram-progress").dataset.tone;
-  $("temp-text").textContent = hw.gpu_temp == null ? "–" : `${fmt(hw.gpu_temp)} °C`;
-  $("temp-bar").style.width = hw.gpu_temp == null ? "0%" : `${Math.min(100, hw.gpu_temp)}%`;
+  // VRAM was a tile of its own; it is a bar here now, beside the expert cache it shares the card with.
+  $("vram-text").textContent = hw.gpu_mem_used == null ? "–" :
+    `${gb(hw.gpu_mem_used)}${hw.gpu_mem_total ? ` / ${gb(hw.gpu_mem_total, 0)}` : ""} GB`;
+  if (multi) $("vram-row").title = per((g) => (g.mem_used == null ? "–" : `${gb(g.mem_used)} GB`));
+  const vramPct = hw.gpu_mem_total && hw.gpu_mem_used != null ? (100 * hw.gpu_mem_used) / hw.gpu_mem_total : 0;
+  $("vram-bar").style.width = `${Math.min(100, vramPct)}%`;
+  if (vramPct > 92) $("vram-progress").dataset.tone = "danger"; else delete $("vram-progress").dataset.tone;
+  // Swap the run itself is holding (the server plus the engine and its children), against what it is allowed:
+  // a `MemorySwapMax=` cap when the run is a capped service, else the machine's swap.  It gets its own bar
+  // rather than a line of the RAM tile because a run at its cap crawls while the machine still shows swap
+  // free, and the machine's figure is the one that would mislead.  Hidden where the OS gives no reading.
+  const swapDen = hw.swap_limit == null ? hw.swap_total : hw.swap_limit;
+  $("swap-text").textContent = hw.strata_swap == null ? "–" :
+    `${gb(hw.strata_swap)}${swapDen ? ` / ${gb(swapDen, 0)}` : ""} GB`;
+  const swapPct = swapDen && hw.strata_swap != null ? (100 * hw.strata_swap) / swapDen : 0;
+  $("swap-bar").style.width = `${Math.min(100, swapPct)}%`;
+  if (swapPct > 92) $("swap-progress").dataset.tone = "danger"; else delete $("swap-progress").dataset.tone;
+  $("swap-row").title = hw.swap_limit ? "Against this run's swap cap (MemorySwapMax=)." : "Against the machine's swap.";
+  $("swap-ctx").style.display = hw.strata_swap == null && hw.swap_total == null && hw.swap_limit == null ? "none" : "";
 
   // recent requests
   const body = $("req-body");
@@ -381,6 +436,13 @@ function projectionText(c) {
          `${single ? ` (layer ${single.replace("single", "")}'s direction)` : ""}. Per chat in Sampling. Its package ` +
          "describes the vector as a refusal-direction projection; measure the speed yourself";
 }
+// The PCIe link the card runs at, as it used to sit in its own tile: the rated generation and width. The
+// generation drops at idle on NVML cards to save power, so the rated one leads and the live one is the fallback.
+function pcieLink(hw) {
+  const gen = hw.gpu_pcie_gen_max || hw.gpu_pcie_gen;
+  return gen ? `Gen${gen}${hw.gpu_pcie_width ? ` x${hw.gpu_pcie_width}` : ""}` : "";
+}
+
 function renderAbout(eng, hw, st) {
   const kv = {int8: "8-bit", q4_0: "4-bit (Hadamard-rotated)", fp16: "16-bit"}[eng.kv] || eng.kv;
   facts($("facts-engine"), [
@@ -393,8 +455,11 @@ function renderAbout(eng, hw, st) {
     ["Images", eng.images ? "on" : "off"],
     ["Experimental speed projection", projectionText(eng.cvec)],
   ]);
+  const gpuLink = pcieLink(hw);
   facts($("facts-hw"), [
-    ["GPU", st.gpu_name ? `${st.gpu_name}${hw.gpu_mem_total ? `, ${gb(hw.gpu_mem_total, 0)} GB` : ""}` : (st.gpu_note || "not readable (NVML)")],
+    ["GPU", st.gpu_name
+      ? `${st.gpu_name}${hw.gpu_mem_total ? `, ${gb(hw.gpu_mem_total, 0)} GB` : ""}${gpuLink ? ` (${gpuLink})` : ""}`
+      : (st.gpu_note || "not readable (NVML)")],
     ["CPU", st.cpu_name ? `${st.cpu_name}${st.threads ? `, ${st.threads} threads` : ""}` : null],
     ["RAM", hw.ram_total ? `${gb(hw.ram_total, 0)} GB` : null],
   ]);

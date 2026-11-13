@@ -1,0 +1,160 @@
+################ Strata memory snapshot ################
+label        : fork-iq2xs-8192-prod-after-bench
+note         : production IQ2_XS, AUTO_MAX 8192, straight after strata_bench --long
+taken_utc    : 20261109T160054Z
+repo         : /home/tommy/repo/Strata-rdna3
+hostname     : 7900xt
+kernel       : 6.8.0-147-generic
+git rev      : ce61f3b0207c9731d5fa7a164c2d84675b1e6fd4
+git describe : 
+git dirty    :  M rdna3/configs/iq2_xs-1gpu.json; M rdna3/configs/iq3_xxs-1gpu.json;?? bench/ab-memory/;
+
+---- engine build ----
+{
+ "source": "local-hip",
+ "backend": "hip",
+ "version": "0.1.49.1",
+ "archs": [
+  "gfx1100"
+ ],
+ "vision": "cpu",
+ "lib_dirs": [
+  "/opt/rocm/lib"
+ ],
+ "src": "84014e66e3c2c44a",
+ "vision_src": "587022c4c655ad94"
+}engine bytes : 47363408
+engine md5   : fb975936515c72520fb7ef8f6748a6c1
+
+---- host RAM / swap ----
+MemTotal:       48684040 kB
+MemAvailable:    8027860 kB
+SwapTotal:      25165820 kB
+SwapFree:       24950780 kB
+free:                total        used        free      shared  buff/cache   available
+free: Mem:            46Gi        38Gi       1.0Gi       1.5Mi       7.2Gi       7.7Gi
+free: Swap:           23Gi       210Mi        23Gi
+swap: NAME      TYPE SIZE USED PRIO
+swap: /swapfile file  24G 210M   -2
+
+---- GPU (amdgpu sysfs, every card) ----
+card1 vram_used_GiB=19.70 vram_total_GiB=19.98 gtt_used_MiB=21.06 busy=?%
+
+---- processes (what the OS really charges to RAM) ----
+PROCESS                     PID   RSS(GiB)     VmPeak      VmHWM     VmSwap  Threads
+strata-host               53523      35.43  106963232   37707536          0       43
+python                    53512       0.21    1024696     226908          0        7
+strata-vision             53519       0.94    1278704    1034604          0       16
+
+engine smaps_rollup:
+  Rss:            37146048 kB
+  Pss:            37141964 kB
+  Pss_Dirty:      36754936 kB
+  Private_Dirty:  36754936 kB
+  Anonymous:      37030900 kB
+  LazyFree:              0 kB
+  Swap:                  0 kB
+  Locked:                0 kB
+gpu-visible pages of the engine (VSZ, includes the VRAM it maps):
+  VmSize:	106401448 kB
+  VmData:	37429480 kB
+
+---- engine command line ----
+/home/tommy/repo/Strata-rdna3/engine/strata --serve --pack /home/tommy/repo/Strata-data/packs/unsloth-ud-iq2_xs --native /home/tommy/repo/Strata-data/models/unsloth-UD-IQ2_XS/Qwen3.8-Flash-Next-UD-IQ2_XS-00001-of-00003.gguf --expert-profile /home/tommy/repo/Strata-rdna3/data/expert-profile.bin --prefill auto --spec 4 --spec-min-p 0.7 --mtp /home/tommy/repo/Strata-data/mtp/rt --max-context 224000 --kv q4_0 --ple-io direct --stats --vision --expert-cache auto --ple-row-cache 1048576 --conversation-cache-mib 2048 --conversation-cache-slots 2 --mtp-draft-vocab /home/tommy/repo/Strata-rdna3/rdna3/draft_vocab_zh60k.bin --pcie-frac 0 --vram-reserve-mib 768 --pool-workers 8 --mtp-q4 all --mtp-window 4096 --adapt-every 1 --adapt-swaps 32 --resident-budget-gib 37 
+---- engine env (STRATA_/HSA_/HIP_/GPU_) ----
+  GPU_MAX_HW_QUEUES=6
+  HIP_VISIBLE_DEVICES=0
+  STRATA_ADAPT_OVERLAP=1
+  STRATA_COMBINE_CPU=1
+  STRATA_ENGINE_NICE=0
+  STRATA_FUSE_CONVAB=1
+  STRATA_GDN_CHUNKED=1
+  STRATA_GDN_CHUNK_GDV=0
+  STRATA_GDN_CONVL2=1
+  STRATA_GDN_HEAD=1
+  STRATA_GDN_NOY=1
+  STRATA_GDN_PP=1
+  STRATA_GR_FUSED=1
+  STRATA_GR_INJ_UP=1
+  STRATA_GR_RDNA=1
+  STRATA_GR_RDNA_A8=1
+  STRATA_GR_RDNA_Q8=1
+  STRATA_HC_UPMIX=1
+  STRATA_HEAD_MIX_MULTI=1
+  STRATA_HIPBLASLT_TUNING=/home/tommy/repo/Strata-rdna3/tools/hip/gfx1100-hipblaslt-100200.txt
+  STRATA_HIP_WMMA=1
+  STRATA_KV_HOST_DMA=1
+  STRATA_PA_FAST=1
+  STRATA_PA_KLDS=1
+  STRATA_PEER_TRANSPORT=host
+  STRATA_PF_F16=2
+  STRATA_PF_FUSED=1
+  STRATA_PF_GEMM=1
+  STRATA_PF_GROUP_RES=1
+  STRATA_PF_HCDOWN=1
+  STRATA_PF_PAD=1
+  STRATA_PREFILL_AUTO_MAX=8192
+  STRATA_PREFILL_CPU_SHARE=0
+  STRATA_PREFILL_CPU_SHARE_MAX=4096
+  STRATA_PREFILL_MMQ_TILE_ROWS=32
+  STRATA_PREFILL_RING=192
+  STRATA_QFUSE=1
+  STRATA_QSA_ROWS=1
+  STRATA_RDNA_MMVQ_WAVE=3
+  STRATA_RDNA_Q6K=1
+  STRATA_RESIDENT_PIN=0
+  STRATA_ROUTE_PUBLISH=1
+  STRATA_SELECT_WMMA=1
+  STRATA_SH_STREAM=0
+  STRATA_STAGER_RING=64
+  STRATA_TOPK_SPLIT_MIN=98304
+  STRATA_VERIFY_QDEDUP=1
+  STRATA_WAIT_FUSE=1
+
+---- systemd unit peak (what the whole service cost) ----
+  Nov 09 22:53:14 7900xt systemd[1]: strata.service: Consumed 45min 39.691s CPU time, 38.7G memory peak, 0B memory swap peak.
+  Nov 09 23:06:25 7900xt systemd[1]: strata.service: Consumed 31min 37.016s CPU time, 39.0G memory peak, 0B memory swap peak.
+  Nov 09 23:50:47 7900xt systemd[1]: strata.service: Consumed 58min 9.346s CPU time, 40.9G memory peak, 0B memory swap peak.
+
+---- engine's own memory decisions (latest 'engine started' segment) ----
+  log: logs/rdna3-iq2_xs.log
+  strata serve: file tier I/O this request: the OS read 0.9 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.20 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 1587 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)
+  strata serve: decode expert cache hit rate: 86.9% (18775 hits / 21600 lookups)
+  strata serve: resident RAM: 31.81 GiB of experts in RAM, 22610 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 1.6 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.20 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 1607 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)
+  strata serve: conversation cache: parked 14615 tokens in 237.2 ms; parked=2 bytes=1916625792 evictions=21 snapshot_bytes=958583920 reused_kv_bytes=0
+  strata serve: decode expert cache hit rate: 84.0% (8062 hits / 9600 lookups)
+  strata serve: resident RAM: 31.81 GiB of experts in RAM, 22749 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 0.6 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.20 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 1615 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)
+  strata serve: decode expert cache hit rate: 89.1% (30382 hits / 34080 lookups)
+  strata serve: resident RAM: 31.81 GiB of experts in RAM, 22942 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 1.7 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.18 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 1644 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)
+  strata serve: decode expert cache hit rate: 89.2% (34266 hits / 38400 lookups)
+  strata serve: resident RAM: 31.81 GiB of experts in RAM, 23188 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 1.7 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.18 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 1677 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)
+  strata serve: decode expert cache hit rate: 94.2% (16285 hits / 17280 lookups)
+  strata serve: resident RAM: 31.81 GiB of experts in RAM, 23235 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 1.1 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.18 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 1696 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)
+  strata serve: decode expert cache hit rate: 92.5% (14210 hits / 15360 lookups)
+  strata serve: resident RAM: 31.81 GiB of experts in RAM, 23290 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 0.7 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.19 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 1708 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)
+  strata serve: decode expert cache hit rate: 89.2% (8996 hits / 10080 lookups)
+  strata serve: resident RAM: 31.81 GiB of experts in RAM, 23333 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 0.6 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.19 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 1718 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)
+  strata serve: conversation cache: parked 14575 tokens in 62.6 ms; parked=2 bytes=1916806528 evictions=22 snapshot_bytes=958222608 reused_kv_bytes=0
+  strata serve: decode expert cache hit rate: 71.1% (8872 hits / 12480 lookups)
+  strata serve: resident RAM: 31.81 GiB of experts in RAM, 23560 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 35.1 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.19 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 1733 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)
+  strata serve: conversation cache: parked 32072 tokens in 49.9 ms; parked=2 bytes=1602162160 evictions=23 snapshot_bytes=643939552 reused_kv_bytes=0
+  strata serve: decode expert cache hit rate: 83.1% (10370 hits / 12480 lookups)
+  strata serve: resident RAM: 31.81 GiB of experts in RAM, 23688 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 1.2 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.20 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 1748 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)
+  strata serve: conversation cache: parked 32072 tokens in 50.0 ms; parked=2 bytes=1287879104 evictions=24 snapshot_bytes=643939552 reused_kv_bytes=0
+  strata serve: decode expert cache hit rate: 88.0% (12668 hits / 14400 lookups)
+  strata serve: resident RAM: 31.81 GiB of experts in RAM, 23871 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 1.8 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.20 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 1764 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)
+  strata serve: conversation cache: parked 32072 tokens in 50.4 ms; parked=2 bytes=1287879104 evictions=25 snapshot_bytes=643939552 reused_kv_bytes=0
+  strata verify: windows from position 139763 run the multi-CTA decode top-k graphs (STRATA_TOPK_SPLIT_MIN 98304)
+  strata serve: decode expert cache hit rate: 76.7% (779712 hits / 1016640 lookups)
+  strata serve: resident RAM: 31.81 GiB of experts in RAM, 33039 exchanged with the VRAM tier, 0 blob reads from the file
+  strata serve: file tier I/O this request: the OS read 556.2 MB from storage (0 major faults) for 0.0 MB of expert reads; page cache held 0.0 MB at the read, not 0.0 MB; io prefetch: 0 read ahead (0.0 MB by pread), 0 used, 0 unused, 0 skipped (cached), 0 dropped; decode waited 0.0 ms in 0 fetches; decode gate: cache room 0.20 of the experts, read-ahead used 100%, page cache held 0% of the decode's reads (EWMA), closed, closed in 2424 windows so far, 1 flips; read ahead 0.0 MB, 0.0 MB of it used; 0 late, 0 not admitted (confidence), 0 (budget 0 MB/window)

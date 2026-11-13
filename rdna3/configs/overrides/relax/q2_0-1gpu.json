@@ -1,0 +1,8 @@
+{
+  "args": {
+    "--kv-resident": "off"
+  },
+  "env": {
+    "STRATA_PREFILL_AUTO_MAX": "16384"
+  }
+}

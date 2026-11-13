@@ -8,7 +8,19 @@ main { flex: 1; min-height: 0; display: flex; }
 .view[hidden] { display: none; }
 .muted { color: var(--st-ink-muted); }
 .small { font-size: var(--st-fs-xs); }
-.card-title { font-weight: var(--st-fw-bold); font-size: var(--st-fs-base); color: var(--st-ink); }
+.card-title {
+  font-weight: var(--st-fw-bold);
+  font-size: var(--st-fs-base);
+  color: var(--st-ink);
+}
+
+/* a title with a value at the far end of the row, as the expert card's header does */
+.justify-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--st-s-2);
+}
 .st-header { position: relative; z-index: 2; flex: none; }
 .st-header .st-tabs { margin-left: var(--st-s-4); }
 #drawer-close .st-icon { transform: rotate(-90deg); }
@@ -88,7 +100,7 @@ main { flex: 1; min-height: 0; display: flex; }
 .badges .st-badge.on { opacity: 1; }
 .state-card__row { display: flex; justify-content: space-between; gap: var(--st-s-4); font-size: var(--st-fs-sm);
                    font-weight: var(--st-fw-medium); font-variant-numeric: tabular-nums; }
-.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--st-s-4); }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--st-s-4); }
 .metric-card { padding: var(--st-s-4) var(--st-s-5); }
 .st-metric__value small { font-size: var(--st-fs-md); font-weight: var(--st-fw-medium); color: var(--st-ink-muted); margin-left: 4px; }
 .st-metric__sub { font-size: var(--st-fs-xs); color: var(--st-ink-muted); font-variant-numeric: tabular-nums; min-height: 1em; }
@@ -100,10 +112,58 @@ main { flex: 1; min-height: 0; display: flex; }
 .st-metric__spark .speed-prefill { color: color-mix(in srgb, var(--st-accent) 65%, black); }
 .st-metric__spark[data-tone="warn"] { color: var(--st-warn); }
 .st-metric__spark[data-tone="info"] { color: var(--st-info); }
-.monitor-row { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 2.4fr); gap: var(--st-s-4); }
-.ctx-card { display: flex; flex-direction: column; gap: var(--st-s-2); }
-.ctx-gauge { position: relative; width: 150px; height: 150px; margin: var(--st-s-2) auto var(--st-s-3); }
-.ctx-gauge .st-gauge { width: 150px; height: 150px; }
+/* The Context fill card stands beside the tiles. Both span the two tile rows, so their bottom edges line up. */
+.monitor-top {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(0, 3fr);
+  gap: var(--st-s-4);
+}
+
+.monitor-top .ctx-card {
+  grid-row: 1 / span 2;
+}
+
+.monitor-top .metrics {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+/* The height the tiles leave over is shared out between every gap, so the card has one even rhythm
+   instead of a lump of dead space above and below the gauge. */
+.ctx-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--st-s-2);
+}
+
+.ctx-bars {
+  display: contents;
+}
+
+/* the bar groups are the card's own rows */
+.ctx-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ctx-bar .bar-row {
+  margin-top: 0;
+}
+
+/* the label sits on its bar; the gap is between groups */
+.ctx-gauge {
+  position: relative;
+  width: 124px;
+  height: 124px;
+  margin: 0 auto;
+}
+
+.ctx-gauge .st-gauge {
+  width: 124px;
+  height: 124px;
+}
 .ctx-gauge .st-gauge__fill { transition: stroke-dasharray 400ms var(--st-ease); }
 .ctx-gauge__label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
                     font-size: var(--st-fs-xs); }
@@ -169,14 +229,89 @@ main { flex: 1; min-height: 0; display: flex; }
 .st-toast { animation: toast-in 180ms var(--st-ease); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 
+/* ---------------------------------------------------------------- offline veil
+   The server stopped answering: the page body (everything under the header) is covered by a dark veil, so a
+   stopped Strata is obvious and its last numbers cannot be read as live. The header keeps its own z-index. */
+/* the fallback; app.js measures the real header and sets --st-header-h on the document when it shows the veil */
+:root {
+  --st-header-h: 60px;
+}
+
+.st-header {
+  height: var(--st-header-h);
+}
+.offline { 
+  position: fixed; 
+  inset: var(--st-header-h) 0 0 0; z-index: 45; 
+  display: flex; 
+  align-items: center;
+  justify-content: center;
+  padding: var(--st-s-6); 
+  background: rgba(9, 12, 14, .68); 
+  pointer-events: none;
+  animation: offline-in 220ms var(--st-ease);
+  backdrop-filter: blur(3px);
+}
+.offline__panel { 
+    background: rgba(255, 255, 128, .25);
+    border-radius: 32px;
+    padding: 24px 48px 32px 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--st-s-2);
+    text-align: center;
+    color: #fff;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, .5);
+  transform: translateY(-75%);
+}
+
+.offline__icon { width: 34px; height: 34px; color: var(--st-warn); }
+.offline__title { font-weight: var(--st-fw-black); font-size: var(--st-fs-xl); line-height: var(--st-lh-tight); }
+.offline__sub { font-size: var(--st-fs-md); color: rgba(255, 255, 255, .82); }
+@keyframes offline-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .offline { animation: none; } }
+
 /* ---------------------------------------------------------------- narrow screens */
 @media (max-width: 1000px) {
-  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .monitor-row { grid-template-columns: 1fr; }
-  .cc-bars { grid-template-columns: 1fr; }
-  .cfg-form { grid-template-columns: 1fr; gap: 4px; }
-  .cfg-form .st-input { margin-bottom: var(--st-s-2); }
+  .monitor-top {
+    grid-template-columns: 1fr;
+  }
+
+  /* Nothing stretches the two any more, so both go back to DOM order: Model state, Context fill, then the tiles.
+     Leaving the metrics on their wide grid-row put them back above the card. */
+  .monitor-top .ctx-card {
+    grid-row: auto;
+  }
+
+  .monitor-top .metrics {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cc-bars {
+    grid-template-columns: 1fr;
+  }
+
+  .cfg-form {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .cfg-form .st-input {
+    margin-bottom: var(--st-s-2);
+  }
+
+  /* The card is no longer stretched by the tiles, so the bars need room of their own. */
+  .ctx-card {
+    gap: var(--st-s-4);
+  }
 }
+
 @media (max-width: 640px) {
   .st-header { padding: 0 var(--st-s-3); gap: var(--st-s-2); }
   .st-header .st-tabs { margin-left: 0; }
