@@ -91,3 +91,7 @@ node_modules/
 # the Strata settings a source build writes when XDG_CONFIG_HOME points into the checkout: they name one PC's
 # folders and a timestamp, so they belong to that PC and not to the repo (rdna3/my.md)
 /.config/
+
+# Gener agent memory: notes about this one machine — local paths, the LAN address, the reverse proxy in front of
+# the keyless server, sshd settings. Useful to the person on this PC, not source and not safe to publish.
+/.agents/
