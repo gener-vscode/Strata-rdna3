@@ -368,8 +368,7 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
   $("ctx-pct").textContent = `${Math.round(frac * 100)}%`;
   $("ctx-sub").textContent = ctx ? `${kfmt(used)} / ${ctxfmt(ctx)}` : "–";
   const cacheBytes = (eng.expert_cache_mib || 0) * 1048576;
-  $("slots-text").textContent = eng.expert_slots ? `${fmt(eng.expert_slots)} · ${gb(cacheBytes)} GB` : "–";
-  $("slots-bar").style.width = hw.gpu_mem_total ? `${Math.min(100, (100 * cacheBytes) / hw.gpu_mem_total)}%` : "0%";
+  $("slots-text").textContent = eng.expert_slots ? `${fmt(eng.expert_slots)} (${gb(cacheBytes)}GB)` : "–";
   $("ram-text").textContent = hw.ram_total ? `${gb(hw.ram_used)} / ${gb(hw.ram_total, 0)} GB` : "–";
   const ramPct = hw.ram_total ? (100 * hw.ram_used) / hw.ram_total : 0;
   $("ram-bar").style.width = `${ramPct}%`;
@@ -381,6 +380,18 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
   const vramPct = hw.gpu_mem_total && hw.gpu_mem_used != null ? (100 * hw.gpu_mem_used) / hw.gpu_mem_total : 0;
   $("vram-bar").style.width = `${Math.min(100, vramPct)}%`;
   if (vramPct > 92) $("vram-progress").dataset.tone = "danger"; else delete $("vram-progress").dataset.tone;
+  // Swap the run itself is holding (the server plus the engine and its children), against what it is allowed:
+  // a `MemorySwapMax=` cap when the run is a capped service, else the machine's swap.  It gets its own bar
+  // rather than a line of the RAM tile because a run at its cap crawls while the machine still shows swap
+  // free, and the machine's figure is the one that would mislead.  Hidden where the OS gives no reading.
+  const swapDen = hw.swap_limit == null ? hw.swap_total : hw.swap_limit;
+  $("swap-text").textContent = hw.strata_swap == null ? "–" :
+    `${gb(hw.strata_swap)}${swapDen ? ` / ${gb(swapDen, 0)}` : ""} GB`;
+  const swapPct = swapDen && hw.strata_swap != null ? (100 * hw.strata_swap) / swapDen : 0;
+  $("swap-bar").style.width = `${Math.min(100, swapPct)}%`;
+  if (swapPct > 92) $("swap-progress").dataset.tone = "danger"; else delete $("swap-progress").dataset.tone;
+  $("swap-row").title = hw.swap_limit ? "Against this run's swap cap (MemorySwapMax=)." : "Against the machine's swap.";
+  $("swap-ctx").style.display = hw.strata_swap == null && hw.swap_total == null && hw.swap_limit == null ? "none" : "";
 
   // recent requests
   const body = $("req-body");
