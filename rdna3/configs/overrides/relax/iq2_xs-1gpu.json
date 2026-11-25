@@ -1,8 +1,8 @@
 {
   "args": {
-    "--kv-resident": "off",
     "--conversation-cache-mib": "0",
-    "--conversation-cache-slots": "0"
+    "--conversation-cache-slots": "0",
+    "--max-context": "224000"
   },
   "env": {
     "STRATA_PREFILL_AUTO_MAX": "16384"

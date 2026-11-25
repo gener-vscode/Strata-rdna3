@@ -14,6 +14,7 @@
   ],
   "open_browser": false,
   "answer_room": false,
+  "tool_call_recovery": true,
   "engine_silence_s": 1800,
   "lib_dirs": "@ROCM_LIBS@",
   "vision": {
@@ -33,7 +34,7 @@
     "--spec-min-p": "0.7",
     "--mtp": "@DATA@/mtp/rt",
     "--max-context": "224000",
-    "--kv": "q4_0",
+    "--kv": "int8",
     "--kv-resident": "32768",
     "--ple-io": "direct",
     "--stats": true,
