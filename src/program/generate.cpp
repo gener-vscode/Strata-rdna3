@@ -1,3 +1,6 @@
+#if !defined(_WIN32)
+#include <sys/resource.h>
+#endif
 #include "ggml.h"
 #include "strata/core/logit_bias.hpp"
 // src/program/generate.cpp - P2.S6: `strata generate`.
@@ -2411,6 +2414,18 @@ static void prime_hw_queues() {
 #endif
 
 int main(int argc, char** argv) {
+#if !defined(_WIN32)
+    {   // core dumps (moon, owner-approved 2026-11-15; docs/HOSTS.md): the host's systemd-coredump stores a core only for a
+        // process whose soft RLIMIT_CORE is above 0 - the engine raises its own to 8 GiB (within the hard limit); the
+        // arena, the pinned blocks and the parked conversations are MADV_DONTDUMP, so a core holds the stacks and the rest
+        struct rlimit rl {};
+        if (getrlimit(RLIMIT_CORE, &rl) == 0) {
+            const rlim_t want = (rlim_t) 8 << 30;
+            rl.rlim_cur = rl.rlim_max == RLIM_INFINITY ? want : std::min<rlim_t>(want, rl.rlim_max);
+            (void) setrlimit(RLIMIT_CORE, &rl);
+        }
+    }
+#endif
     // **UNBUFFERED, BECAUSE THE INTERESTING OUTPUT IS THE OUTPUT BEFORE A CRASH.**  `stdout` redirected to a
     // pipe or a file is block-buffered, so a program that dies loses every line it had already printed - which
     // turns "it crashed at step 7" into "it crashed somewhere", and the difference is a debugging session.
@@ -5663,15 +5678,17 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "strata generate: DP prompt path: CUDA%d's foreign session shares the TP session's %.0f MiB "
                                      "(STRATA_TP_SHARE_DP)\n", dev, (double) tp_arena_bytes[i] / 1048576.0);
             }
+            strata::core::SessionState& owner = i == 0 ? st0.ss : ss;
             if ((!shared && cudaMalloc(&buf, dbytes) != cudaSuccess) ||
-                strata::core::session_init(g, o.max_context, K, buf, dp_ss[i], lo, hi, rope) == 0) {
+                strata::core::session_init(g, o.max_context, K, buf, dp_ss[i], lo, hi, rope, owner.qsa_states) == 0) {
                 std::fprintf(stderr, "strata generate: DP prompt path: CUDA%d's session for layers [%lld, %lld) failed; "
                                      "DP off\n", dev, (long long) lo, (long long) hi);
                 cudaGetLastError();
                 ok = false;
                 break;
             }
-            strata::core::SessionState& owner = i == 0 ? st0.ss : ss;
+            // (stage A) session_init shared the owner's host copies already; this keeps the old contract for a state
+            // whose layout differed (it allocated its own and is pointed at the owner's, as before)
             for (int64_t q = dp_ss[i].qsa_ord0; q < dp_ss[i].qsa_ord0 + dp_ss[i].qsa_alloc; ++q)
                 dp_ss[i].qsa_states[q].host = owner.qsa_states[q].host;
             strata::core::session_zero(dp_ss[i], g, nullptr, i == 0 ? main_cs : st0.stream);
@@ -10309,6 +10326,21 @@ int main(int argc, char** argv) {
             if (std::strcmp(what, "prompt") == 0) nf_prompt_windows = true;
             return true;
         };
+        // [claude] issue #18: a window's persistent kernel (STRATA_MEGAKERNEL) had a phase that never completed (another
+        // process held CUs): the window is wrong.  As for non-finite logits, none of its tokens goes out, the request ends
+        // (DONE nonfinite, which the server retries) and the next request reads its prompt from token 0; the persistent
+        // kernel is off for the rest of the process (the windows are captured again with the plain kernels), where the
+        // engine used to stop with an error.
+        auto mk_stall_hit = [&](strata::core::Verifier& v, const char* what) -> bool {
+            if (!v.megakernel_stall_take()) return false;
+            v.megakernel_off();
+            std::fprintf(stderr, "strata serve: a %s window's persistent kernel stalled (#18): its tokens are not emitted, the "
+                                 "request ends (DONE nonfinite) and the next request reads its prompt from token 0\n", what);
+            std::fflush(stderr);
+            nf_hit = true;
+            nan_flush = true;
+            return true;
+        };
         auto imgs_below = [&](const std::vector<ImgKey>& all, int64_t L) {
             std::vector<ImgKey> v;
             for (const ImgKey& k : all) if (k.start < L) v.push_back(k);
@@ -10911,10 +10943,13 @@ int main(int argc, char** argv) {
             std::string e2;
             strata::core::SdmaCopier* c = strata::core::SdmaCopier::for_device(dev < 0 ? 0 : dev, e2);
             static std::set<int> said;
-            if (said.insert(dev).second)
-                std::fprintf(stderr, c != nullptr ? "strata serve: the late refill on CUDA%d goes to the SDMA engine through HSA (engine %d)\n"
-                                                  : "strata serve: the late refill on CUDA%d stays on hipMemcpyAsync: %s\n",
-                             dev < 0 ? 0 : dev, c != nullptr ? c->engine() : 0, e2.c_str());
+            if (said.insert(dev).second) {   // [claude] #14: the reason was printed as "(null)" (the engine number took its place)
+                if (c != nullptr)
+                    std::fprintf(stderr, "strata serve: the late refill on CUDA%d goes to the SDMA engine through HSA (engine %d)\n",
+                                 dev < 0 ? 0 : dev, c->engine());
+                else
+                    std::fprintf(stderr, "strata serve: the late refill on CUDA%d stays on hipMemcpyAsync: %s\n", dev < 0 ? 0 : dev, e2.c_str());
+            }
             return c;
         };
         // a part's completion counter for n copies (none: its event alone)
@@ -11283,10 +11318,13 @@ int main(int argc, char** argv) {
                         std::string e2;
                         strata::core::SdmaCopier* sd = strata::core::SdmaCopier::for_device(dev, e2);
                         static std::set<int> said;
-                        if (said.insert(dev).second)
-                            std::fprintf(stderr, sd != nullptr ? "strata serve: the adaptive tier's copies on CUDA%d go to the SDMA engine through HSA (engine %d)\n"
-                                                               : "strata serve: the adaptive tier's copies on CUDA%d stay on hipMemcpyAsync: %s\n",
-                                         dev, sd != nullptr ? sd->engine() : 0, e2.c_str());
+                        if (said.insert(dev).second) {   // [claude] #14: (the same "(null)" reason as the late refill's line)
+                            if (sd != nullptr)
+                                std::fprintf(stderr, "strata serve: the adaptive tier's copies on CUDA%d go to the SDMA engine through HSA (engine %d)\n",
+                                             dev, sd->engine());
+                            else
+                                std::fprintf(stderr, "strata serve: the adaptive tier's copies on CUDA%d stay on hipMemcpyAsync: %s\n", dev, e2.c_str());
+                        }
                         asd.parts.push_back({sd, {}, dev, s.layer, 0, &asd});
                         part = &asd.parts.back();
                         if (asd.layers.empty() || asd.layers.back() != s.layer) asd.layers.push_back(s.layer);
@@ -12130,6 +12168,9 @@ int main(int argc, char** argv) {
         }
         strata::core::pin_sim_report("at READY");
         strata::core::pin_reserve_release_hard();   // the load is over: nothing else needs the headroom
+#if defined(STRATA_USE_HIP)
+        ::strata::hip_compat::host_lock_report("at READY");   // the one host memory lock line (hip_compat/host_lock.hpp)
+#endif
         std::printf("READY %lld stop\n", (long long) o.max_context);   // "stop": this engine honours STOP
         std::fflush(stdout);
         std::string line;
@@ -13449,6 +13490,7 @@ int main(int argc, char** argv) {
                     for (int64_t c = 0; c < cells; ++c) put(c, c, c, c);
                     upload_mrope();
                     mrope_identity = true;
+                    // the server answers these at once (serve/server.py ERR_GOES_ON / ERR_GOES_ON_RE match this wording): keep them in step
                     std::printf("ERR %s\n", ve.c_str());
                     std::fflush(stdout);
                     continue;
@@ -14197,6 +14239,10 @@ int main(int argc, char** argv) {
                     }
                     if (nonfinite_hit(dv, "prompt")) {   // (its commit is not needed: the next request reads from 0)
                         e = "non-finite logits (#879)";
+                        return false;
+                    }
+                    if (mk_stall_hit(dv, "prompt")) {   // [claude] #18 (the same: the next request reads from 0)
+                        e = "the persistent kernel stalled (#18)";
                         return false;
                     }
                     // STRATA_LOGPOS=<path>: the teacher-forced log-probability of every token read here (every
@@ -15290,6 +15336,12 @@ int main(int argc, char** argv) {
             if (pipe) ver_b.set_history(hist_n > 0 ? d_hist : nullptr, hist_n);
             if (tp_on) tpv[0].set_history(hist_n > 0 ? d_hist : nullptr, hist_n);
             bool cancelled = false;
+            // todo 7 (Fable stall5 section 3): the prompt read failed on the host side - no CUDA fault (a refused
+            // allocation, a hand-off that could not grow): the request ends as a cancelled one does (the lent slots
+            // refilled, the session not kept live, the checkpoints taken before the failed part kept), with
+            // `ERR prompt read failed: <why>` as its one terminal line in place of DONE (and BADM), and the engine goes on
+            bool read_failed = false;
+            std::string read_err;
             tr("prompt start", n - 1);
             req_prompt_n = n;
             tpp_read_req = false;   // [claude] (set by this request's TP read)
@@ -15450,15 +15502,44 @@ int main(int argc, char** argv) {
                 if (!sp_ok) {
                     if (yielded_at < 0 && (batch_fatal || !stop_req.load())) {
                         std::fprintf(stderr, "strata serve: %s\n", err.c_str());
-                        std::printf("ERR %s\n", err.c_str());
-                        // #224: a CUDA fault (an illegal address) poisons the context for the whole process, and
-                        // unwinding the destructors on it could hang until the 60 s watchdog: leave at once
-                        if (cudaPeekAtLastError() != cudaSuccess) {
-                            std::fflush(stdout);
-                            std::fflush(stderr);
-                            std::_Exit(1);
+                        // todo 7 (Fable item 7 review, E1): only this request fails, and the engine goes on, for an
+                        // ALLOW-LIST of host-side resource refusals, each proven by an injection test - everything else
+                        // (a broken invariant, a verifier that released its GPU waits, a failed batch window, a CUDA
+                        // fault) stays fail-stop as before: the engine exits and the server restarts it.  Add a prefix
+                        // here only with its own injection test (results/stall-20261115).
+                        static const char* const kGoesOn[] = {
+                            "prefill: the hand-off buffer could not grow",   // a refused pin + a failed pageable allocation
+                        };
+                        bool goes_on = false;
+                        for (const char* pre : kGoesOn) goes_on = goes_on || err.rfind(pre, 0) == 0;
+                        goes_on = goes_on && !batch_fatal;
+                        bool fault = cudaPeekAtLastError() != cudaSuccess;
+                        if (!fault && goes_on) {
+                            // a fault another thread's call returned (and cleared) shows in the devices' own state: every
+                            // device of the engine must finish its queued work cleanly before it takes another request
+                            for (int st = -1; st < (int) stages.size() && !fault; ++st) {
+                                const strata::core::OnDevice on(st < 0 ? 0 : stages[(size_t) st]->dev);
+                                fault = cudaDeviceSynchronize() != cudaSuccess;
+                            }
                         }
-                        return 1;
+                        if (fault || !goes_on) {
+                            std::printf("ERR %s\n", err.c_str());
+                            // #224: a CUDA fault (an illegal address) poisons the context for the whole process, and
+                            // unwinding the destructors on it could hang until the 60 s watchdog: leave at once
+                            if (fault) {
+                                std::fflush(stdout);
+                                std::fflush(stderr);
+                                std::_Exit(1);
+                            }
+                            return 1;
+                        }
+                        std::fprintf(stderr, "strata serve: the prompt read failed with no CUDA fault: this request fails, "
+                                             "the engine goes on (todo 7)\n");
+                        read_failed = true;
+                        read_err = err;
+                        pp_exact = false;   // a part was in flight: the session is not exactly at pp_reached
+                        cancelled = true;   // the cancel's way out below: the lent slots refilled, no decode, nothing live
+                        break;
                     }
                     cancelled = true;   // stopped while reading the prompt: refill the lent slots below, then DONE cancel
                     break;
@@ -15512,7 +15593,7 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "strata batch: the prompt was read in %lld parts, the slots decoding %.0f ms between "
                                      "them\n", (long long) il_parts + 1, il_ms);
             const double prompt_ms = std::chrono::duration<double, std::milli>(Clock::now() - r0).count();
-            std::printf("REUSED %lld\n", (long long) resume);   // the prompt is read; the first window comes next
+            if (!read_failed) std::printf("REUSED %lld\n", (long long) resume);   // the prompt is read; the first window comes next
             std::fflush(stdout);
             // the verify windows: the first holds the last prompt token alone (STRATA_ADMIT_MERGE_FIRST: the prompt
             // tokens from merge_at on, the last one's output its first token)
@@ -16582,7 +16663,10 @@ int main(int argc, char** argv) {
                 std::string commit_err;
                 const Clock::time_point tc0 = Clock::now();
                 dt_c_adapt += msx(tw1, tc0);
-                const bool nf_now = nonfinite_hit(dv, first_window ? "first decode" : "decode");   // (reads the window's flags only)
+                // [claude] #18: a stalled persistent kernel ends the request as non-finite logits do (its stall word is
+                // cleared, so the commit below runs: the next request reads from token 0 anyway)
+                const bool nf_now = mk_stall_hit(dv, first_window ? "first decode" : "decode") ||
+                                    nonfinite_hit(dv, first_window ? "first decode" : "decode");   // (reads the window's flags only)
                 const Clock::time_point tc1 = Clock::now();
                 dt_c_nf += msx(tc0, tc1);
                 bool commit_split = false;   // TP: card 0's commit in or beside the draft, card 1's after it
@@ -16883,7 +16967,9 @@ int main(int argc, char** argv) {
                 std::snprintf(chain_txt, sizeof(chain_txt), " %lld %lld %lld %lld %lld", (long long) chain_ok,
                               (long long) chain_drafts, (long long) sfx_ok, (long long) sfx_drafts, (long long) dec_windows);
             if (yielded_at >= 0) std::printf("YIELDED %d %lld\n", yielded_slot, (long long) yielded_at);
-            std::printf("DONE %lld %lld %.1f %.1f %s %lld %lld %lld %lld %lld %lld %lld %.1f %lld %lld%s chunk=%lld "
+            if (read_failed)   // todo 7: the request's one terminal line (the server: no DONE follows an ERR)
+                std::printf("ERR prompt read failed: %s\n", read_err.c_str());
+            else std::printf("DONE %lld %lld %.1f %.1f %s %lld %lld %lld %lld %lld %lld %lld %.1f %lld %lld%s chunk=%lld "
                         "experts_streamed=%lld\n",
                         (long long) produced_n,
                         (long long) n, prompt_ms, decode_ms, finish, (long long) draft_accepted, (long long) draft_offered,
@@ -16983,7 +17069,7 @@ int main(int argc, char** argv) {
                                      span(tc1, tc2), span(tc3, tc4), move_best ? " (moved)" : "");
                     }
                 }
-                std::printf("BADM %d %d\n", admit_slot, cont ? 1 : 0);
+                if (!read_failed) std::printf("BADM %d %d\n", admit_slot, cont ? 1 : 0);   // (todo 7: its ERR ended it)
                 if (trace && piped && cont) {
                     rows_wait = "the admission";
                     rows_wait_t = Clock::now();
@@ -17004,7 +17090,7 @@ int main(int argc, char** argv) {
                          (long long) n, (long long) resume, read_txt, prompt_ms,
                          prompt_ms > 0 ? 1000.0 * read_n / prompt_ms : 0.0, (long long) produced_n, decode_ms,
                          decode_ms > 0 ? 1000.0 * produced_n / decode_ms : 0.0, (long long) draft_accepted,
-                         (long long) draft_offered, checks.size(), cancelled ? " (cancelled)" : "");
+                         (long long) draft_offered, checks.size(), read_failed ? " (failed)" : cancelled ? " (cancelled)" : "");
             if (serve_adapt_drain_ms >= 1.0)
                 std::fprintf(stderr, "strata serve: the request first waited %.0f ms for the adaptive tier's round in flight\n",
                              serve_adapt_drain_ms);
