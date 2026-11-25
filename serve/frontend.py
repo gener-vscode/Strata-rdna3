@@ -923,9 +923,23 @@ class _RawValue:
     WS = " \n\r\t"
     DELIM = " \n\r\t,]}:"
     HEX = "0123456789abcdefABCDEF"
+    NUM = "0123456789+-."
+    LIT = ("true", "false", "null")
 
     def __init__(self):
         self.str = False        # inside a JSON string; escapes are matched whole, so nothing else
+
+    @classmethod
+    def _may_continue(cls, s: str) -> bool:
+        """Could `s` still grow into one JSON scalar?  Only a number or one of the three literals
+        can, and only while every character belongs to it.  Holding anything else is what froze the
+        stream on Chinese: CJK carries no ASCII delimiter, so an unquoted run of it - or a run after
+        the model's unescaped quote closed a string early - stayed held back until the value's very
+        end, which reads as a silent stream for half a minute.
+
+        Trailing whitespace is not counted: `json.loads` tolerates it, so `42 ` is still a number
+        and must not be quoted.  The caller strips it before asking."""
+        return any(lit.startswith(s) for lit in cls.LIT) or all(ch in cls.NUM for ch in s)
 
     def piece(self, text: str, final: bool = False) -> tuple[int, str]:
         """(characters of `text` consumed, the text to send now).  `text` is only ever the part of the
@@ -984,7 +998,7 @@ class _RawValue:
             j = i
             while j < n and text[j] not in self.DELIM:
                 j += 1
-            if j == n and not final:
+            if j == n and not final and self._may_continue(text[i:j]):
                 return i, "".join(out)              # the scalar may still be arriving
             out.append(text[i:j])
             i = j
@@ -1311,24 +1325,55 @@ class OutputParser:
             elif self.ss == "raw":
                 end = param_end(rest)
                 if end < 0:
-                    if self.sraw is None:
-                        head = rest.lstrip()
-                        if not head:
-                            return out              # the value's first character is still arriving
-                        self.sp += len(rest) - len(head)
-                        # A value that opens like JSON leaves the stream as it is written.  One that
-                        # does not (a bare path for a tool whose schema names no types) still goes
-                        # out whole once complete, exactly as before.
-                        self.sraw = _RawValue() if head[0] in "{[" else "whole"
-                        continue
-                    if not isinstance(self.sraw, _RawValue):
-                        return out                  # not JSON: wait for it to be whole, as before
-                    # Cut at the end param_end will confirm: a candidate whose follower has not arrived
-                    # is held from its start, otherwise a suffix that could still become </parameter>.
-                    # Without this the scanner would read the `<` as a scalar and send the closing tag
-                    # to the client as part of the arguments.
+                    # The part of the buffer that is certainly the value's own text: a candidate
+                    # whose follower has not arrived is cut from its start, otherwise a suffix that
+                    # could still become </parameter>.  Without this the scanner would read the `<` as
+                    # a scalar and send the closing tag to the client as part of the arguments.
+                    # Every decision below is taken on this slice only: reading past it is what made
+                    # a real `null` look like text and got it quoted.
                     cut = (rest.find(PARAM_END) if end == -2
                            else len(rest) - self._hold(rest, (PARAM_END,)))
+                    lead = len(rest) - len(rest.lstrip())
+                    if self.sraw is None:
+                        head = rest[lead:cut]
+                        if not head:
+                            return out              # the value's first character is still arriving
+                        self.sp += lead
+                        # A value that opens like JSON leaves the stream as it is written.  A value
+                        # whose first character cannot begin a JSON value at all - a bare path, a
+                        # markdown report, Chinese with no ASCII delimiter - can never be decoded, so
+                        # the parser is going to send it as a JSON string, and a string it can send as
+                        # it arrives.  Only a number or one of the three literals is still worth
+                        # holding: it is short, and it goes out bare, so quoting it early would be
+                        # wrong.  A value opening with `"` is held too: the parser re-serializes what
+                        # it decodes, and an unescaped quote inside it changes what it re-serializes
+                        # to, so its pieces could not be concatenated back with confidence.
+                        self.sraw = _RawValue() if head[0] in "{[" else (
+                            "whole" if head[0] == '"' or _RawValue._may_continue(head.rstrip())
+                            else "text")
+                        if self.sraw == "text":
+                            args('"')               # the string's opening quote
+                        continue
+                    if self.sraw == "whole":
+                        # Still a number or a literal prefix, so it may still go out bare.  Once its
+                        # text diverges from those it is text after all and joins the text path.
+                        if not _RawValue._may_continue(rest[lead:cut].rstrip()):
+                            self.sraw = "text"
+                            args('"')
+                        else:
+                            return out              # wait for it to be whole
+                    if self.sraw == "text":
+                        # Escaping is per character, so these pieces concatenated are exactly what one
+                        # json.dumps of the whole value would have sent.  The trailing newline before
+                        # </parameter> is not part of the value, so it does not go out.
+                        safe = cut
+                        if safe > 0 and rest[safe - 1] == "\n":
+                            safe -= 1
+                        if safe <= 0:
+                            return out
+                        args(json.dumps(rest[:safe], ensure_ascii=False)[1:-1])
+                        self.sp += safe
+                        continue
                     n, piece = self.sraw.piece(rest[:cut])
                     args(piece)
                     self.sp += n
@@ -1340,6 +1385,16 @@ class OutputParser:
                     n, piece = self.sraw.piece(rest[:end], final=True)
                     args(piece)
                     self.sp += end - n + len(PARAM_END)
+                    self.ss = "between"
+                    continue
+                if self.sraw == "text":
+                    # The opening quote and most of the body are already on the wire: send only the
+                    # rest of the escaped body, and close the string.
+                    value = rest[:end]
+                    if value.endswith("\n"):
+                        value = value[:-1]
+                    args(json.dumps(value, ensure_ascii=False)[1:-1] + '"')
+                    self.sp += end + len(PARAM_END)
                     self.ss = "between"
                     continue
                 value = rest[:end]
@@ -1384,7 +1439,13 @@ class OutputParser:
         if self.ss == "str":
             tail += '"'
         elif self.ss == "raw":
-            tail += json.dumps(self.buf[self.sp:].strip("\n"))
+            if self.sraw == "text":
+                # The opening quote is already on the wire.  Send the rest of the body but leave the
+                # string OPEN: a call the output ended inside must still not parse as arguments, so
+                # the client can tell it from one it can run (#211).
+                tail += json.dumps(self.buf[self.sp:].strip("\n"), ensure_ascii=False)[1:-1]
+            else:
+                tail += json.dumps(self.buf[self.sp:].strip("\n"))
         tail += "}"
         out.append(Event("tool_args", tail, call=self.scall))
         self.ss = "done"

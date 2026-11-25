@@ -12,7 +12,9 @@ tests check at every chunk boundary:
   * the pieces concatenated parse to the call's arguments, exactly as the whole answer does;
   * a call the output ended inside is still not a call, and its pieces still do not parse (#211);
   * no piece ends inside a string's escape sequence;
-  * a value whose text does not open like JSON goes out whole once complete, as before.
+  * a value whose text cannot be JSON at all (a bare path, a markdown report, Chinese with no ASCII
+    delimiter) goes out as a JSON string, as it is written; only a number or one of the three
+    literals, which is short and goes out bare, is still held until it is whole.
 
     python -m unittest serve.test_tool_args_streaming -v
 """
@@ -123,20 +125,70 @@ class CutInsideAnArray(unittest.TestCase):
 
 
 class AValueThatDoesNotOpenLikeJson(unittest.TestCase):
-    """A bare path (a tool whose schema names no types) is not JSON: the parser could not stream
-    text it would have to quote, so it goes out whole once complete, exactly as before."""
+    """A bare path, a markdown report, a Chinese paragraph: text that cannot be JSON at all.
 
-    TEXT = ("<tool_call>\n<function=readFiles>\n<parameter=path>\n" + "d" * 80 +
-            "\n</parameter>\n</function>\n</tool_call>")
+    The parser cannot decode it, so it sends it as a JSON string - and a string it can send as it
+    arrives.  It used to go out whole once complete, which held the stream silent for the whole
+    length of the value: on the report that started this, `streamed` sat at 619 for 18 seconds
+    while the model wrote a 5000-character markdown report, then dumped it as one piece."""
 
-    def test_it_arrives_whole(self):
-        for step in (1, 7, 4096):
-            with self.subTest(step=step):
-                evs = run(self.TEXT, step)
-                calls = [e.call for e in evs if e.kind == "tool_call"]
-                self.assertEqual([c.arguments for c in calls], [{"path": "d" * 80}])
-                pieces = streamed(evs)
-                self.assertIn('"' + "d" * 80 + '"', pieces, "the value did not arrive in one piece")
+    ASCII = ("<tool_call>\n<function=readFiles>\n<parameter=path>\n" + "d" * 80 +
+             "\n</parameter>\n</function>\n</tool_call>")
+    CJK = ("<tool_call>\n<function=readFiles>\n<parameter=path>\n" +
+           "系統狀態：驗證 NVMe 升級後 `strata.service` 嘅行為，包括 MCLK 同 idle power。" * 12 +
+           "\n</parameter>\n</function>\n</tool_call>")
+
+    @staticmethod
+    def value(text):
+        return text.split("\n")[3]
+
+    def test_it_arrives_while_it_is_still_being_written(self):
+        for name, text in (("ascii", self.ASCII), ("cjk", self.CJK)):
+            value = self.value(text)
+            for step in (1, 7, 17):
+                with self.subTest(name=name, step=step):
+                    p = OutputParser(thinking=False, tools=TOOLS, stream_tools=True)
+                    cut = text.index("\n</parameter>")        # written; its closer has not arrived
+                    pieces = []
+                    for i in range(0, cut, step):
+                        pieces += streamed(p.feed(text[i:i + step]))
+                    got = "".join(pieces)
+                    self.assertTrue(got.startswith('{"path":"'), got[:20])
+                    self.assertGreater(len(got), len(value) // 2,
+                                       "the value did not leave while it was being written")
+                    self.assertLess(max(len(x) for x in pieces), len(value), "it left in one piece")
+
+    def test_the_pieces_concatenate_to_the_calls_arguments(self):
+        for name, text in (("ascii", self.ASCII), ("cjk", self.CJK)):
+            value = self.value(text)
+            for step in (1, 7, 4096):
+                with self.subTest(name=name, step=step):
+                    evs = run(text, step)
+                    calls = [e.call for e in evs if e.kind == "tool_call"]
+                    self.assertEqual([c.arguments for c in calls], [{"path": value}])
+                    self.assertEqual(json.loads("".join(streamed(evs))), {"path": value})
+
+    def test_a_cut_call_still_does_not_parse(self):
+        """#211: streaming a text value must not make an unfinished call look runnable."""
+        for name, text in (("ascii", self.ASCII), ("cjk", self.CJK)):
+            for cut in range(text.index(self.value(text)) + 10, text.index("\n</parameter>"), 11):
+                for step in (1, 7, 4096):
+                    with self.subTest(name=name, cut=cut, step=step):
+                        evs = run(text[:cut], step)
+                        self.assertEqual([e for e in evs if e.kind == "tool_call"], [])
+                        with self.assertRaises(ValueError):
+                            json.loads("".join(streamed(evs)))
+
+    def test_a_number_or_literal_is_still_held_because_it_goes_out_bare(self):
+        """Only text is streamed.  `42` and `true` are short, and the parser sends them bare, so
+        quoting one early would send the client something that parses to a different type."""
+        for raw in ("42", "-7.5", "true", "null"):
+            text = ("<tool_call>\n<function=readFiles>\n<parameter=items>\n" + raw +
+                    "\n</parameter>\n</function>\n</tool_call>")
+            for step in (1, 7, 4096):
+                with self.subTest(raw=raw, step=step):
+                    evs = run(text, step)
+                    self.assertEqual(json.loads("".join(streamed(evs))), {"items": json.loads(raw)})
 
 
 ESCAPED = [{"text": "line\nquote\" slash\\ unicodeé"}]
@@ -243,6 +295,72 @@ class AMalformedValueKeepsStreaming(unittest.TestCase):
                 calls = [e.call for e in evs if e.kind == "tool_call"]
                 self.assertEqual([c.arguments for c in calls],
                                  [{"items": self.VALUE.strip("\n")}])
+
+
+class AValueWithNoAsciiDelimitersStreams(unittest.TestCase):
+    """The second field report, four days after the first.  The argument was Chinese markdown, and
+    CJK carries no ASCII space, comma or bracket, so the scanner found no delimiter inside the run
+    and held all of it back until the value's very end: the progress line's streamed count sat
+    still for 29 seconds while the engine wrote another 2500 tokens, then left about 6900
+    characters at once.  A run is now held only while it could still grow into one JSON scalar - a
+    number, or a prefix of true/false/null - so text that can never be one leaves as it arrives.
+
+    The assertion is about what is *held back*, not about how big the pieces are: when a whole
+    value arrives in one feed, a run leaving as one piece is correct, and that is what a client
+    reading a finished answer sees."""
+
+    CJK = "快速棕色狐狸跳過lazy狗。呢段係中文冇英文空格同逗號。" * 40
+    VALUES = {"unquoted": '{"markdown": ' + CJK + '}',
+              "after an unescaped quote": '{"markdown": "開頭 ' + '未轉義" ' + CJK + '"}'}
+
+    @staticmethod
+    def _text(value):
+        return ("<tool_call>\n<function=readFiles>\n<parameter=items>\n" + value +
+                "\n</parameter>\n</function>\n</tool_call>")
+
+    @staticmethod
+    def _held(value, step):
+        """The most characters of `value` that have arrived but not yet left the stream."""
+        text = AValueWithNoAsciiDelimitersStreams._text(value)
+        at = text.index(value)
+        p = OutputParser(thinking=False, tools=TOOLS, stream_tools=True)
+        wrap = len('{"items":')                  # the arguments piece that precedes the value
+        got, worst = 0, 0
+        for i in range(0, len(text), step):
+            got += sum(len(e.text or "") for e in p.feed(text[i:i + step]) if e.kind == "tool_args")
+            arrived = max(0, min(i + step - at, len(value)))
+            worst = max(worst, arrived - (got - wrap))
+        return worst
+
+    def test_the_text_leaves_as_it_arrives(self):
+        for label, value in self.VALUES.items():
+            for step in (1, 17, 4096):
+                with self.subTest(label=label, step=step):
+                    self.assertLess(self._held(value, step), 128,
+                                    "%s: the stream held the value back" % label)
+
+    def test_the_whole_value_reaches_the_client(self):
+        for label, value in self.VALUES.items():
+            for step in (1, 17, 4096):
+                with self.subTest(label=label, step=step):
+                    got = "".join(streamed(run(self._text(value), step)))
+                    self.assertGreater(len(got), len(value) * 3 // 4,
+                                       "%s: only %d of %d characters streamed" % (
+                                           label, len(got), len(value)))
+
+    def test_the_closing_tag_never_reaches_the_client(self):
+        for value in self.VALUES.values():
+            for step in (1, 17, 4096):
+                with self.subTest(step=step):
+                    self.assertNotIn(PARAM_END, "".join(streamed(run(self._text(value), step))))
+
+    def test_the_call_still_decodes_as_the_text_it_was(self):
+        """The non-streamed answer is untouched: a value that is not JSON stays the text it was."""
+        for label, value in self.VALUES.items():
+            for step in (1, 17, 4096):
+                with self.subTest(label=label, step=step):
+                    calls = [e.call for e in run(self._text(value), step) if e.kind == "tool_call"]
+                    self.assertEqual([c.arguments for c in calls], [{"items": value}])
 
 
 if __name__ == "__main__":
