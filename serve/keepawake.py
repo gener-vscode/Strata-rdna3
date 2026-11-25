@@ -30,6 +30,7 @@ class KeepAwake:
         self._cond = threading.Condition()
         self._closed = False
         self._thread = None
+        self._published = None        # the state the thread has set; None until it has set one
 
     @classmethod
     def create(cls, enabled: bool, say=print):
@@ -49,19 +50,23 @@ class KeepAwake:
         return ka
 
     def _loop(self):
-        held = False
         while True:
             with self._cond:
-                while not self._closed and (self._count > 0) == held:
+                # `None` means nothing has been set yet, so the first pass never waits: a hold
+                # the caller asked for must go out even if the count is already back to zero by
+                # the time this thread runs, which is what a short request used to look like.
+                while not self._closed and self._published is not None and self._published == (self._count > 0):
                     self._cond.wait()
                 if self._closed:
                     break
                 want = self._count > 0
             try:
                 self._call(ES_CONTINUOUS | ES_SYSTEM_REQUIRED if want else ES_CONTINUOUS)
-                held = want
             except Exception:         # noqa: BLE001  never fail a request over this
-                held = want
+                pass
+            with self._cond:
+                self._published = want
+                self._cond.notify_all()
         try:
             self._call(ES_CONTINUOUS)
         except Exception:             # noqa: BLE001
@@ -79,6 +84,11 @@ class KeepAwake:
             self._count += 1
             self._start()
             self._cond.notify_all()
+            # Wait for the hold to go out.  The thread started here may not have run before the
+            # request finished, and it used to sample the count only when it woke: a request that
+            # came and went left SetThreadExecutionState untouched and the PC free to sleep.
+            while not self._closed and self._published is None:
+                self._cond.wait()
 
     def release(self):
         with self._cond:
