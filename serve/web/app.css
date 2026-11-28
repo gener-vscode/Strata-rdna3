@@ -21,9 +21,19 @@ main { flex: 1; min-height: 0; display: flex; }
   align-items: baseline;
   gap: var(--st-s-2);
 }
-.st-header { position: relative; z-index: 2; flex: none; }
-.st-header .st-tabs { margin-left: var(--st-s-4); }
-#drawer-close .st-icon { transform: rotate(-90deg); }
+.st-header {
+  position: relative;
+  z-index: 2;
+  flex: none;
+}
+
+.st-header .st-tabs {
+  margin-left: var(--st-s-4);
+}
+
+#drawer-close .st-icon {
+  transform: rotate(-90deg);
+}
 
 /* ---------------------------------------------------------------- chat */
 .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; }
@@ -91,24 +101,108 @@ main { flex: 1; min-height: 0; display: flex; }
 
 /* ---------------------------------------------------------------- monitor */
 .view--monitor, .view--about { overflow-y: auto; }
-.monitor, .about { max-width: 1240px; width: 100%; margin: 0 auto; padding: var(--st-s-6); display: flex; flex-direction: column;
-                   gap: var(--st-s-5); }
-.state-card { display: flex; flex-direction: column; gap: var(--st-s-3); }
-.state-card__head { display: flex; align-items: center; gap: var(--st-s-4); flex-wrap: wrap; }
-.badges { display: flex; gap: var(--st-s-2); flex-wrap: wrap; }
-.badges .st-badge { opacity: .38; transition: opacity var(--st-dur); }
-.badges .st-badge.on { opacity: 1; }
-.state-card__row { display: flex; justify-content: space-between; gap: var(--st-s-4); font-size: var(--st-fs-sm);
-                   font-weight: var(--st-fw-medium); font-variant-numeric: tabular-nums; }
-.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--st-s-4); }
-.metric-card { padding: var(--st-s-4) var(--st-s-5); }
+.monitor, .about { 
+  max-width: 1240px; width: 100%; margin: 0 auto; padding: var(--st-s-6); display: flex; flex-direction: column;
+  gap: var(--st-s-5);
+}
+.state-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--st-s-3);
+}
+
+.state-card__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--st-s-4);
+  font-size: var(--st-fs-sm);
+  font-weight: var(--st-fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The model's state is one badge, not a title and a row of five: the line's left caption is drawn as a badge
+   in the colour of the state that is on (app.js puts the state on the element). The shape is the kit's
+   .st-badge, so it reads as the badges elsewhere on the page. */
+#state-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--st-line);
+  border-radius: var(--st-r-pill);
+  background: var(--st-surface-2);
+  color: var(--st-ink-muted);
+  font-size: var(--st-fs-xs);
+  font-weight: 700;
+}
+
+#state-label::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+#state-label[data-state="reading"] {
+  border-color: transparent;
+  background: var(--st-info-tint);
+  color: var(--st-info-text);
+}
+
+#state-label[data-state="generating"] {
+  border-color: transparent;
+  background: var(--st-accent-tint);
+  color: var(--st-accent-text);
+}
+
+#state-label[data-state="queued"] {
+  border-color: transparent;
+  background: var(--st-warn-tint);
+  color: var(--st-warn-text);
+}
+
+#state-label[data-state="error"] {
+  border-color: transparent;
+  background: var(--st-danger-tint);
+  color: var(--st-danger-text);
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--st-s-4);
+}
+.metric-card {
+  padding: var(--st-s-4) var(--st-s-5);
+}
+
+/* GPU load and Power together in one tile, for 560px and below (built in app.js, hidden by the block there) */
+.tile-gpu {
+  display: none;
+}
 .st-metric__value small { font-size: var(--st-fs-md); font-weight: var(--st-fw-medium); color: var(--st-ink-muted); margin-left: 4px; }
 .st-metric__sub { font-size: var(--st-fs-xs); color: var(--st-ink-muted); font-variant-numeric: tabular-nums; min-height: 1em; }
 .st-metric__spark { display: block; overflow: visible; }
 .speed-values { display: flex; justify-content: space-between; gap: var(--st-s-3); }
 .speed-values > div { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .speed-values > div:last-child { text-align: right; }
-.speed-values .st-metric__value { font-size: clamp(20px, 2.2vw, var(--st-fs-stat)); }
+/* The two figures in a tile are the same kind of figure as every other tile has, so they take the kit's stat
+   size. They used to shrink with the window, which made a Speed or GPU tile read smaller than the single
+   figure tiles beside it for no reason. */
+.speed-values .st-metric__value {
+  font-size: var(--st-fs-stat);
+}
+
+/* The side that is not running now (app.js): one figure is moving, and the other is a number from an earlier
+   request. Fading the waiting side whole keeps the pair readable and says which one to look at. The GPU tile
+   shares this layout but never gets the class, so its Load and Power figures stay equally bright. */
+.speed-values .is-dim {
+  opacity: .4;
+  transition: opacity var(--st-dur) var(--st-ease);
+}
 .st-metric__spark .speed-prefill { color: color-mix(in srgb, var(--st-accent) 65%, black); }
 .st-metric__spark[data-tone="warn"] { color: var(--st-warn); }
 .st-metric__spark[data-tone="info"] { color: var(--st-info); }
@@ -135,6 +229,13 @@ main { flex: 1; min-height: 0; display: flex; }
   flex-direction: column;
   justify-content: space-between;
   gap: var(--st-s-2);
+}
+
+/* The title is a piece of the model's name (app.js), and the piece reads better in caps: "ud-iq2_xs" looks
+   like a word, "UD-IQ2_XS" looks like the tag it is. The text itself stays as the model is named, so the
+   tooltip and anything that copies it are unchanged. */
+#ctx-title {
+  text-transform: uppercase;
 }
 
 .ctx-bars {
@@ -278,8 +379,8 @@ main { flex: 1; min-height: 0; display: flex; }
     grid-template-columns: 1fr;
   }
 
-  /* Nothing stretches the two any more, so both go back to DOM order: Model state, Context fill, then the tiles.
-     Leaving the metrics on their wide grid-row put them back above the card. */
+        /* Nothing stretches the two any more, so both go back to DOM order: Model state, Context fill, then the
+           tiles. Leaving the metrics on their wide grid-row put them back above the card. */
   .monitor-top .ctx-card {
     grid-row: auto;
   }
@@ -313,17 +414,258 @@ main { flex: 1; min-height: 0; display: flex; }
 }
 
 @media (max-width: 640px) {
-  .st-header { padding: 0 var(--st-s-3); gap: var(--st-s-2); }
-  .st-header .st-tabs { margin-left: 0; }
-  .st-tab { padding: 0 10px; }
-  .st-tab .st-icon { display: none; }
-  #pill-text { display: none; }
-  .chat { padding: var(--st-s-5) var(--st-s-4); }
-  .composer-wrap { padding: 0 var(--st-s-3) var(--st-s-3); }
-  .monitor, .about { padding: var(--st-s-4); }
-  .facts { grid-template-columns: 1fr; gap: 2px; }
-  .facts dd { margin-bottom: var(--st-s-2); }
+  .st-header {
+    padding: 0 var(--st-s-3);
+    gap: var(--st-s-2);
+  }
+
+  .st-header .st-tabs {
+    margin-left: 0;
+  }
+
+  .st-tab {
+    padding: 0 10px;
+  }
+
+  .st-tab .st-icon {
+    display: none;
+  }
+
+  #pill-text {
+    display: none;
+  }
+
+  .chat {
+    padding: var(--st-s-5) var(--st-s-4);
+  }
+
+  .composer-wrap {
+    padding: 0 var(--st-s-3) var(--st-s-3);
+  }
+
+  .monitor,
+  .about {
+    padding: var(--st-s-4);
+  }
+
+  .facts {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .facts dd {
+    margin-bottom: var(--st-s-2);
+  }
 }
+
+/* ---------------------------------------------------------------- 560px and below
+   Four things change on a phone. The request's progress bar leaves its card and becomes the thin line
+   across the very top of the screen, as wide as the progress. The six tiles come down to four: GPU load and
+   Power share one tile, and GPU temp goes. The menu bar keeps its place - the tabs and the state are worth
+   more than the 20px they save - but it becomes a thin strip, 40px of a phone's height instead of 60. And
+   the space the page keeps around and between the cards is halved, because on a phone a screenful of cards
+   is mostly empty background.
+
+   Only the space outside the cards is halved. What is inside a card is the kit's own rhythm and is left
+   alone, so the cards still read as the same cards as on a desktop. */
+@media (max-width: 560px) {
+
+  /* The page's own edge and the space between two cards are now the same 8px. They used to be 8px and 10px -
+       each half of a different desktop figure (24px of padding, 20px of gap) - which made the space above the
+       first card read smaller than the space between two of them. */
+    .monitor,
+    .about {
+      padding: var(--st-s-2);
+      gap: var(--st-s-2);
+    }
+
+  /* the two gaps inside the Monitor's own groups: between the Context fill card and the tiles, and between
+     the tiles themselves */
+        .monitor-top,
+        .metrics {
+          gap: var(--st-s-2);
+        }
+    
+/* The bar stays, but a low one: 40px instead of 60, with the pill and the theme button shrunk to match.
+     The offline veil follows by itself - app.js measures the bar and writes its height to --st-header-h,
+     which is where the veil starts. */
+.st-header {
+  height: 40px;
+  padding: 0 var(--st-s-3);
+  gap: var(--st-s-2);
+}
+
+/* The name goes. The tabs already say where you are, and on a phone their room is worth more than it. */
+.st-header__brand {
+  display: none;
+}
+
+/* The tabs stop being a panel set inside the bar and become part of it, the way the status pill and the
+     theme button already are: no inset panel, no rounded corners, and each tab the full height of the bar.
+     The selected one is marked by its background and a rule along its bottom edge - an inset shadow rather
+     than a real border, so the tab's height is untouched. */
+.st-header .st-tabs {
+  margin-left: 0;
+  height: 100%;
+  padding: 0;
+  gap: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.st-header .st-tab {
+  height: 100%;
+  padding: 0 var(--st-s-3);
+  border: 0;
+  border-radius: 0;
+  font-size: var(--st-fs-xs);
+}
+
+.st-header .st-tab[aria-selected="true"] {
+  background: var(--st-surface-2);
+  box-shadow: inset 0 -2px 0 var(--st-accent);
+}
+    
+        .st-pill {
+          height: 22px;
+          padding: 0 8px;
+          font-size: var(--st-fs-xs);
+        }
+    
+        .st-pill__dot {
+          width: 7px;
+          height: 7px;
+        }
+    
+        .st-btn--icon {
+          width: 28px;
+          height: 28px;
+        }
+  
+    /* Four tiles, not six: GPU load and Power share the "GPU" tile built in app.js (load at the left, power at
+       the right, its chart the power one), and GPU temp is dropped - the one number a phone can do nothing
+       about. The tiles are hidden, not rebuilt, so the run config's "tiles" order still decides the rest. */
+    .tile-gpu {
+      display: block;
+    }
+  
+        .metrics [data-tile="gpuLoad"],
+        .metrics [data-tile="power"],
+        .metrics [data-tile="gpuTemp"] {
+          display: none;
+        }
+    
+
+        
+                                /* The request's progress does not need a card of its own on a phone, so it leaves the card and becomes
+                                   the thin line across the very top of the window, the way a browser shows a page loading: it starts
+                                   at the left edge and is as wide as the progress. app.js already writes that width every poll, and
+                                   the kit's own colour rules (data-tone="info" while reading, "danger" past 92%) still reach it.
+                                   The stacking stays at the header's own level on purpose: the offline veil (45) then covers the
+                                   line, so a stopped Strata cannot leave a last-request progress looking live at the top. */
+                                #state-progress {
+                                  position: fixed;
+                                  top: 0;
+                                  left: 0;
+                                  z-index: 2;
+                                  width: 100%;
+                                  height: 2px;
+                                  border: 0;
+                                  border-radius: 0;
+                                  background: transparent;
+                                }
+        
+#state-progress .st-progress__bar {
+  height: 2px;
+  border-radius: 0;
+}
+
+/* The card's title only says what the table underneath already says, so it goes. What is left after the
+   table - the line of totals and the button that grows it - shares one row: totals at the left, the button
+   at the right, which is the side it acts on. .req-head lets the button through to the card's own grid, and
+   the table spans the whole width above them. Every row is named, because the button comes first in the
+   document and would otherwise claim the top row for itself. */
+.req-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.req-card .req-head {
+  display: contents;
+}
+
+.req-card .req-head .card-title {
+  display: none;
+}
+
+.req-card .table-wrap {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.req-card .req-totals {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.req-card #req-all {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+}
+
+/* Nine columns do not fit a phone, so the table turns on its side: one row per figure, one column per
+     request. app.js writes the labels into the body and app.css hides the wide header, and the label column
+     stays where it is while the requests scroll sideways. */
+#req-wrap thead {
+  display: none;
+}
+
+#req-body th {
+  position: sticky;
+  left: 0;
+  background: var(--st-surface);
+  white-space: nowrap;
+}
+
+/* The card keeps 20px above its content and the first row keeps its own top padding on top of that, so the
+   table started further from the top edge than it ended from the bottom one. The first row gives its top
+   padding up, leaving the card's own padding as the only space above the table - the same as below it. */
+#req-body tr:first-child th,
+#req-body tr:first-child td {
+  padding-top: 0;
+}
+
+/* The Status row is gone, and its text colour moved onto the request's time - the same three colours the
+   badge had, read from the kit: muted for a request that ended by itself, amber for one that was stopped or
+   closed, red for one that failed. The time is a figure like the rest of the column, so it sits on the right
+   edge with them rather than starting a ragged left line of its own. */
+#req-body .req-time {
+  color: var(--st-ink-muted);
+  text-align: right;
+}
+
+#req-body .req-time.is-queued {
+  color: var(--st-warn-text);
+}
+
+#req-body .req-time.is-error {
+  color: var(--st-danger-text);
+}
+
+/* A request is a column now, so the pointer follows the column it is in rather than crossing rows. app.js
+   marks the cells; the kit's own row-hover is switched off here so the two do not fight. */
+#req-wrap .st-table tr:hover td {
+  background: transparent;
+}
+
+#req-body .hover {
+  background: var(--st-surface-2);
+}
+}
+
 /* Images tab (POST /v1/images/generations) */
 .img-form{display:flex;flex-direction:column;gap:12px}
 .img-prompt{height:auto;padding:10px 14px;resize:vertical}

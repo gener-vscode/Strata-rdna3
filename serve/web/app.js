@@ -57,6 +57,9 @@ async function copyText(text, btn) {
 // the system's theme until the user picks one (only a click is saved)
 function setTheme(t, save) {
   document.documentElement.dataset.theme = t;
+  // the browser's own chrome follows the theme: the address bar on a page, the status bar on an installed app
+  const tint = document.querySelector("meta[name=theme-color]");
+  if (tint) tint.content = t === "dark" ? "#0e1113" : "#f9fafb";
   if (save) try { localStorage.setItem("strata.theme", t); } catch (e) { /* ignore */ }
   $("theme-icon").setAttribute("href", `${SPRITE}#i-${t === "dark" ? "sun" : "moon"}`);
   $("dark-toggle").setAttribute("aria-checked", String(t === "dark"));
@@ -70,6 +73,24 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
   try { saved = localStorage.getItem("strata.theme"); } catch (err) { /* ignore */ }
   if (!saved) setTheme(e.matches ? "dark" : "light", false);
 });
+
+// ------------------------------------------------------------------ the page installed as an app
+// serve/web/manifest.webmanifest says what the app is called and what its icons are; serve/web/sw.js keeps
+// the page and the files it loads for itself in the browser, so it opens when Strata is not running (and then
+// shows its own offline veil) instead of the browser's error page. Which browser offers "Install" and where
+// is its own business; there is nothing here to set up.
+//
+// A worker needs a secure address. 127.0.0.1 and localhost are secure, and so is any https address; a LAN
+// address over plain http is not, and there the worker is simply not registered and the page is the same page
+// it has always been.
+if (window.isSecureContext && "serviceWorker" in navigator) {
+  addEventListener("load", () => {
+    // the scope is the page's own directory, so an app served under the run config's "dashboard" path
+    // controls that path and nothing above it
+    navigator.serviceWorker.register("web/sw.js", { scope: new URL("./", location.href).href })
+      .catch(() => { /* without the worker the page works exactly as it did before */ });
+  });
+}
 
 let tab = "chat";
 function showTab(name) {
@@ -85,6 +106,12 @@ function showTab(name) {
 }
 for (const b of document.querySelectorAll(".st-tab")) b.onclick = () => showTab(b.dataset.tab);
 window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+
+// The width the layout changes at. The requests table is drawn on its side below it (app.css), so the table
+// has to be drawn again when the line is crossed; the bar itself stays put at every width and only gets
+// thinner there.
+const narrowScreen = matchMedia("(max-width: 560px)");
+narrowScreen.addEventListener("change", () => { if (lastMetrics) render(lastMetrics); });
 
 // ------------------------------------------------------------------ server access
 let apiKey = store.get("apikey", "");
@@ -127,7 +154,9 @@ async function loadHealth() {
 // go top left. Names the file does not know are dropped and any it left out go at the end, so a typo can never
 // hide a tile. This order is the default, and it is what the shipped configs ask for.
 const TILE = {
-  speed: { label: "Speed", icon: "gauge", unit: "t/s" },
+  // Speed carries its unit in the title now: the tile holds two figures, and writing "t/s" after each of
+  // them said the same thing twice.
+  speed: { label: "Speed (t/s)", icon: "gauge" },
   gpuLoad: { label: "GPU load", icon: "gpu", unit: "%", max: 100 },
   gpuTemp: { label: "GPU temp", icon: "thermometer", unit: "°C", tone: "warn" },
   power: { label: "Power", icon: "bolt", unit: "W" },
@@ -138,14 +167,18 @@ const TILES_DEFAULT = ["speed", "gpuLoad", "power", "diskRead", "cpuLoad", "gpuT
 let tileOrder = TILES_DEFAULT;
 function buildTiles(order) {
   tileOrder = [...new Set([...(order || []).filter((k) => TILE[k]), ...TILES_DEFAULT])];
-  $("metrics").innerHTML = tileOrder.map((k) => {
+  const cards = tileOrder.map((k) => {
     const m = TILE[k];
+    // Prefill first, decode last: the two now read in the order a request happens. The sub lines start
+    // empty because the tile's title says what the figures are, and what is written there is only ever how
+    // fresh the number is ("now", "last request"). The two sides are named so one of them can be dimmed
+    // while the other is running (see renderMonitor).
     return `
-  <div class="st-card metric-card"><div class="st-metric">
+  <div class="st-card metric-card" data-tile="${k}"><div class="st-metric">
     <span class="st-metric__label">${icon(m.icon, "st-icon st-icon--sm")}${esc(m.label)}</span>
     ${k === "speed" ? `<div class="speed-values">
-      <div><span class="st-metric__value" id="mv-speed">-</span><span class="st-metric__sub" id="ms-speed">Decode</span></div>
-      <div class="speed-prefill"><span class="st-metric__value" id="mv-prefill">-</span><span class="st-metric__sub" id="ms-prefill">Prefill</span></div>
+      <div id="side-prefill"><span class="st-metric__value" id="mv-prefill">-</span><span class="st-metric__sub" id="ms-prefill"></span></div>
+      <div id="side-speed"><span class="st-metric__value" id="mv-speed">-</span><span class="st-metric__sub" id="ms-speed"></span></div>
     </div>` : `<span class="st-metric__value" id="mv-${k}">–</span>
     <span class="st-metric__sub" id="ms-${k}"></span>`}
     <svg class="st-metric__spark" id="sp-${k}" viewBox="0 0 100 32" preserveAspectRatio="none"${m.tone ? ` data-tone="${m.tone}"` : ""}>
@@ -155,7 +188,23 @@ function buildTiles(order) {
         <path class="line" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"
         stroke-linecap="round" vector-effect="non-scaling-stroke"/></g>` : ""}</svg>
   </div></div>`;
-  }).join("");
+  });
+  // 560px and below GPU load and Power read better in one tile of the Speed tile's shape, and GPU temp is
+  // dropped (app.css). It is built here and hidden by CSS, so the two figures are written the same way at any
+  // width and the tile is right whichever way the window is sized.
+  cards.splice(tileOrder.indexOf("gpuLoad") + 1, 0, `
+  <div class="st-card metric-card tile-gpu" data-tile="gpu"><div class="st-metric">
+    <span class="st-metric__label">${icon("gpu", "st-icon st-icon--sm")}GPU</span>
+    <div class="speed-values">
+      <div><span class="st-metric__value" id="mv-gpu-load">–</span><span class="st-metric__sub" id="ms-gpu-load">Load</span></div>
+      <div class="speed-prefill"><span class="st-metric__value" id="mv-gpu-power">–</span><span class="st-metric__sub" id="ms-gpu-power">Power</span></div>
+    </div>
+    <svg class="st-metric__spark" id="sp-gpu-power" viewBox="0 0 100 32" preserveAspectRatio="none">
+      <path class="area" fill="currentColor" opacity=".12"/><path class="line" fill="none" stroke="currentColor"
+      stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+    </svg>
+  </div></div>`);
+  $("metrics").innerHTML = cards.join("");
 }
 buildTiles(TILES_DEFAULT);
 
@@ -295,10 +344,89 @@ function renderTotals(t) {
   return `Since ${since}: ${fmt(t.requests)} requests · ${fmt(read)} prompt tokens read${pSpeed} (${fmt(t.reused)} reused) · ` +
          `${fmt(t.output_tokens)} written${oSpeed}`;
 }
+// The nine figures of one request, in the order the table's header lists them, each beside the class its
+// cell takes. Returning them as a list lets the same values be laid out one row per request (the wide
+// table) or one row per figure (560px and below, app.css), where nine columns do not fit a phone.
+const REQ_STATUS = 1;   // the header's Status column, which 560px and below drops and folds into the time
+function requestCells(r, narrow = false) {
+  const badge = {
+    stop: ["", "Done"], length: ["", "Max tokens"], cancel: ["st-badge--queued", "Stopped"],
+    disconnect: ["st-badge--queued", "Closed"], error: ["st-badge--error", "Error"]
+  };
+  const [cls, text] = badge[r.finish] || ["", r.finish || "–"];
+  // 560px and below the Status row goes, so the badge's own colour moves onto the time (app.css).
+  const tone = !narrow ? "" : cls === "st-badge--error" ? " is-error" : cls === "st-badge--queued" ? " is-queued" : "";
+  // The seconds are the first thing to go on a phone: requests arrive more than a minute apart, and the
+  // narrow column cannot hold "20:18:14" beside the request's other figures.
+  const t = new Date(r.time * 1000).toLocaleTimeString([], narrow ? { hour: "2-digit", minute: "2-digit" }
+    : { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const proj = r.projection == null ? "" : ` <span class="st-badge${r.projection ? " st-badge--reading" : ""}" title="experimental speed projection ${r.projection ? "on" : "off"}">${r.projection ? "ESP" : "stock"}</span>`;
+  // #588: the VRAM share; the PCIe share (--pcie-frac) beside it when there is one
+  const hit = r.hit_rate == null ? "–" : `${(r.hit_rate * 100).toFixed(1)}%` +
+    (r.pcie_share ? ` <span class="muted" title="routed experts the GPU read over PCIe (--pcie-frac) or another GPU computed">+${(r.pcie_share * 100).toFixed(1)}% PCIe</span>` : "");
+  // Reused tokens are not prefetched again. Match the Monitor's existing Prefill metric.
+  const fresh = r.prompt_tokens == null ? null : Math.max(0, r.prompt_tokens - (r.reused || 0));
+  const prefillRate = fresh > 0 && r.prompt_ms > 0 ? fresh / (r.prompt_ms / 1000) : null;
+  // Token counts past a thousand are rounded to thousands on a phone: "1,444" and "1.4k" say the same thing
+  // to the person reading it, and the shorter one leaves the column room for the rest.
+  // The order below is the header's order (index.html): the two speeds first, then the three token counts.
+  return [[esc(t), narrow ? `req-time${tone}` : ""],   // above 560px the time keeps the plain cell it had
+  [`<span class="st-badge ${cls}">${esc(text)}</span>${proj}`, ""],
+  [fmt(prefillRate), "num"], [fmt(r.decode_tok_s, 1), "num"],
+  [narrow ? kfmt(r.prompt_tokens) : fmt(r.prompt_tokens), "num"],
+  [narrow ? kfmt(r.reused) : fmt(r.reused), "num"],
+  [fmt(r.output_tokens), "num"],
+  [hit, "num"], [`${fmt(r.duration_s, 1)} s`, "num"]];
+}
+
+// 560px and below a request is a column, so the pointer lights the column it is in rather than the row it
+// crosses (app.css). CSS has no column selector, so the class goes here; the colours stay with the stylesheet.
+let hoverCol = -1;
+function highlightColumn(n) {
+  if (n === hoverCol) return;
+  hoverCol = n;
+  for (const c of document.querySelectorAll("#req-body .hover")) c.classList.remove("hover");
+  if (n < 0) return;
+  for (const row of document.querySelectorAll("#req-body tr"))
+    if (row.children[n]) row.children[n].classList.add("hover");
+}
+$("req-body").addEventListener("mouseover", (e) => {
+  const cell = e.target.closest("td");
+  highlightColumn(narrowScreen.matches && cell ? cell.cellIndex : -1);
+});
+$("req-body").addEventListener("mouseleave", () => highlightColumn(-1));
+
+// 560px and below a request is a column, so how many of them fit depends on the width of the window. The
+// table is drawn with the usual twelve first; if that overflows, the columns are counted from the left until
+// the card is full, so the last one that does not fit goes instead of the table scrolling sideways. A column
+// is only as narrow as the widest figure in it, which is why every row is measured, not just the first.
+function requestFit(wrap, body) {
+  const rows = [...body.rows];
+  const columns = rows.length ? rows[0].cells.length - 1 : 0;      // less the sticky label column
+  if (!wrap.clientWidth || columns < 2 || wrap.scrollWidth <= wrap.clientWidth + 1) return columns;
+  const widthOf = (i) => Math.max(...rows.map((r) => r.cells[i].getBoundingClientRect().width));
+  let room = wrap.clientWidth - widthOf(0), keep = 0;
+  for (let i = 1; i <= columns; i++) {
+    const w = widthOf(i);
+    if (w > room) break;
+    room -= w; keep++;
+  }
+  return Math.max(1, keep);
+}
+
+// The fit follows the width of the window, not just the 560px line, so dragging the edge changes the count
+// too. The next poll would fix it by itself; this makes it immediate, and waits for the drag to settle.
+let resizeTimer = null;
+addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (lastMetrics && tab === "monitor") render(lastMetrics); }, 150);
+});
 function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
-  // model state
+  // model state. The title and the row of five badges are gone from the page (index.html): the line's left
+  // caption is drawn as the one badge of the state that is on, so the state goes on the element and CSS,
+  // not the script, draws it.
   const on = live.queued > 0 ? "queued" : live.state;
-  for (const b of document.querySelectorAll("#state-badges .st-badge")) b.classList.toggle("on", b.dataset.s === on || b.dataset.s === live.state);
+  $("state-label").dataset.state = on;
   const prog = $("state-progress");
   let label = "Waiting for a request", detail = "", pct = 0;
   if (live.state === "reading") {
@@ -325,12 +453,19 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
 
   // the six tiles
   const speed = live.state === "generating" ? live.tok_s : last ? last.decode_tok_s : null;
-  setMetric("speed", speed == null ? null : fmt(speed, 1), "t/s",
-            live.state === "generating" ? "Decode now" : last ? "Decode last request" : "Decode");
+  // The tile's title carries the unit now, so the figures stand alone and the line under each one only says
+  // how fresh it is - "now" while it is happening, "last request" after, nothing when there is no request.
+  setMetric("speed", speed == null ? null : fmt(speed, 1), "",
+    live.state === "generating" ? "now" : last ? "last request" : "");
   const prefill = live.state !== "idle" ? live.prefill_tok_s_mean
                 : last && last.prompt_ms > 0 ? Math.max(0, last.prompt_tokens - (last.reused || 0)) / (last.prompt_ms / 1000) : null;
-  setMetric("prefill", prefill == null ? null : fmt(prefill), "t/s",
-            live.state === "reading" ? "Prefill now" : live.state === "generating" ? "Prefill this request" : last ? "Prefill last request" : "Prefill");
+  setMetric("prefill", prefill == null ? null : fmt(prefill), "",
+    live.state === "reading" ? "now" : live.state === "generating" ? "this request" : last ? "last request" : "");
+  // Only one of the two happens at a time, so the side that is not running now is dimmed (app.css): while the
+  // prompt is being read the decode figure belongs to the last request, and while the answer is being written
+  // the prefill figure does. Idle dims neither - there both figures are equally the last request's.
+  $("side-prefill").classList.toggle("is-dim", live.state === "generating");
+  $("side-speed").classList.toggle("is-dim", live.state === "reading");
   spark("sp-speed", h.tok_s);
   spark("sp-prefill", h.prefill_tok_s_mean);
   // a model split across several cards (issue #112): the cards show their total / mean / hottest, and each card's own
@@ -346,6 +481,12 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
   spark("sp-gpuTemp", h.gpu_temp, 90);
   setMetric("power", hw.gpu_power == null ? null : fmt(hw.gpu_power), "W", hw.gpu_power_limit ? `of ${fmt(hw.gpu_power_limit)} W limit` : "");
   spark("sp-power", h.gpu_power, hw.gpu_power_limit);
+  // 560px and below the two go into one "GPU" tile, whose chart is the power one (app.css). The same figures,
+  // written beside the tiles they come from.
+  setMetric("gpu-load", hw.gpu_util == null ? null : fmt(hw.gpu_util), "%", "Load");
+  setMetric("gpu-power", hw.gpu_power == null ? null : fmt(hw.gpu_power), "W",
+    hw.gpu_power_limit ? `of ${fmt(hw.gpu_power_limit)} W limit` : "Power");
+  spark("sp-gpu-power", h.gpu_power, hw.gpu_power_limit);
   setMetric("cpuLoad", hw.cpu == null ? null : fmt(hw.cpu), "%", st.threads ? `${st.cores ? `${st.cores} cores · ` : ""}${st.threads} threads` : "");
   spark("sp-cpuLoad", h.cpu, 100);
   if (hw.disk_read_mb == null) {
@@ -363,11 +504,20 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
   if (live.state !== "idle") used = (live.prompt_tokens || 0) + (live.generated || 0);
   else if (last) used = (last.prompt_tokens || 0) + (last.output_tokens || 0);
   const frac = ctx ? Math.min(1, used / ctx) : 0;
+  const ctxPct = `${Math.round(frac * 100)}%`;
+  const ctxSub = ctx ? `${kfmt(used)} / ${ctxfmt(ctx)}` : "–";
   $("ctx-fill").setAttribute("stroke-dasharray", `${(235.6 * frac).toFixed(1)} 314.2`);
   $("ctx-fill").style.opacity = 235.6 * frac >= 3 ? "1" : "0";         // a near-zero arc would draw just its round cap
-  $("ctx-pct").textContent = `${Math.round(frac * 100)}%`;
-  $("ctx-sub").textContent = ctx ? `${kfmt(used)} / ${ctxfmt(ctx)}` : "–";
+  $("ctx-pct").textContent = ctxPct;
+  $("ctx-sub").textContent = ctxSub;
   const cacheBytes = (eng.expert_cache_mib || 0) * 1048576;
+  // The card is about this model's experts, so its title is the part of the model's name that says which
+  // model it is: the last two pieces of "qwen-flash-unsloth-ud-iq2_xs" - "ud-iq2_xs". Hovering says the
+  // whole name. "Experts" stays where there is no model to name yet.
+  const bits = (eng.model || "").split("-").filter(Boolean);
+  const cardTitle = $("ctx-title");
+  cardTitle.textContent = bits.length ? bits.slice(-2).join("-") : "Experts";
+  cardTitle.title = eng.model || "Experts";
   $("slots-text").textContent = eng.expert_slots ? `${fmt(eng.expert_slots)} (${gb(cacheBytes)}GB)` : "–";
   $("ram-text").textContent = hw.ram_total ? `${gb(hw.ram_used)} / ${gb(hw.ram_total, 0)} GB` : "–";
   const ramPct = hw.ram_total ? (100 * hw.ram_used) / hw.ram_total : 0;
@@ -395,30 +545,44 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
 
   // recent requests
   const body = $("req-body");
+  let shown = requests.slice(0, reqShowAll ? requests.length : 12);
+  const sideways = narrowScreen.matches;   // 560px and below: the table on its side (app.css)
   if (!requests.length) {
-    body.innerHTML = `<tr><td colspan="9" class="muted">No requests yet</td></tr>`;
+    body.innerHTML = `<tr><td${sideways ? "" : ` colspan="9"`} class="muted">No requests yet</td></tr>`;
+  } else if (sideways) {
+    // One row per figure, one column per request, newest first. The labels are read from the header app.css
+    // hides, so the two lists can never drift apart - and the header's own tooltips come with them.
+    hoverCol = -1;                                  // the rows are new, so any highlight on the old ones is gone
+    const heads = [...document.querySelectorAll("#req-wrap thead th")];
+    const rowsOf = (cells) => heads.map((th, i) => i === REQ_STATUS ? "" :   // the status is the colour of the time
+      `<tr><th scope="row"${th.title ? ` title="${esc(th.title)}"` : ""}>${esc(th.textContent)}</th>` +
+      `${cells.map((c) => `<td${c[i][1] ? ` class="${c[i][1]}"` : ""}>${c[i][0]}</td>`).join("")}</tr>`).join("");
+    let cells = shown.map((r) => requestCells(r, true));
+    body.innerHTML = rowsOf(cells);
+    // A request is a column here, so how many of them fit is the window's business, not a fixed twelve:
+    // measure the widest one and keep only what the card holds without a horizontal scrollbar. "Show all"
+    // is the person asking for the scroll, so that one is left alone.
+    if (!reqShowAll) {
+      const fit = requestFit($("req-wrap"), body);
+      if (fit < cells.length) { cells = cells.slice(0, fit); body.innerHTML = rowsOf(cells); }
+      shown = cells;
+    }
   } else {
-    const badge = {stop: ["", "Done"], length: ["", "Max tokens"], cancel: ["st-badge--queued", "Stopped"],
-                   disconnect: ["st-badge--queued", "Closed"], error: ["st-badge--error", "Error"]};
-    body.innerHTML = requests.slice(0, reqShowAll ? requests.length : 12).map((r) => {
-      const [cls, text] = badge[r.finish] || ["", r.finish || "–"];
-      const t = new Date(r.time * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
-      const proj = r.projection == null ? "" : ` <span class="st-badge${r.projection ? " st-badge--reading" : ""}" title="experimental speed projection ${r.projection ? "on" : "off"}">${r.projection ? "ESP" : "stock"}</span>`;
-      // #588: the VRAM share; the PCIe share (--pcie-frac) beside it when there is one
-      const hit = r.hit_rate == null ? "–" : `${(r.hit_rate * 100).toFixed(1)}%` +
-        (r.pcie_share ? ` <span class="muted" title="routed experts the GPU read over PCIe (--pcie-frac) or another GPU computed">+${(r.pcie_share * 100).toFixed(1)}% PCIe</span>` : "");
-      // Reused tokens are not prefetched again. Match the Monitor's existing Prefill metric.
-      const fresh = r.prompt_tokens == null ? null : Math.max(0, r.prompt_tokens - (r.reused || 0));
-      const prefillRate = fresh > 0 && r.prompt_ms > 0 ? fresh / (r.prompt_ms / 1000) : null;
-      return `<tr><td>${esc(t)}</td><td><span class="st-badge ${cls}">${esc(text)}</span>${proj}</td><td class="num">${fmt(r.prompt_tokens)}</td>
-        <td class="num">${fmt(r.reused)}</td><td class="num">${fmt(r.output_tokens)}</td><td class="num">${fmt(prefillRate)}</td><td class="num">${fmt(r.decode_tok_s, 1)}</td>
-        <td class="num">${hit}</td><td class="num">${fmt(r.duration_s, 1)} s</td></tr>`;
-    }).join("");
+    hoverCol = -1;
+    body.innerHTML = shown.map((r) =>
+      `<tr>${requestCells(r).map(([v, cls]) => `<td${cls ? ` class="${cls}"` : ""}>${v}</td>`).join("")}</tr>`).join("");
   }
   const all = $("req-all");
   kept = kept == null ? requests.length : kept;
-  all.hidden = kept <= 12;
-  all.textContent = reqShowAll ? "Show fewer" : `Show all (${kept})`;
+  // "N more" says what the button does: this many are on the screen, that many more exist. Once they are
+  // all out, the button goes back to the short "Recent", which is what the table is then showing. On a phone
+  // the count on the screen is measured (requestFit), so the number beside it is measured too.
+  //
+  // Expanded, the button is the only way back to the recent dozen, so it stays: "kept <= shown" is true by
+  // definition once every request the server keeps is on the screen, and hiding on that alone made the
+  // button vanish the moment "N more" was clicked.
+  all.hidden = !reqShowAll && kept <= shown.length;
+  all.textContent = reqShowAll ? "Recent" : `${kept - shown.length} more`;
   $("req-wrap").classList.toggle("all", reqShowAll);
   $("req-totals").textContent = renderTotals(totals);
 }

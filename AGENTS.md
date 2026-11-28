@@ -63,6 +63,16 @@ Terminal cannot run. Strata's MCP server ([docs/MCP_SERVER.md](docs/MCP_SERVER.m
 - Keep the docs' style: plain words, short sentences, written for non-technical users first. Give measured numbers
   with what they were measured on. Make no claim without a measurement.
 
+### This fork's own work (not upstream)
+
+**[my.md](my.md)** is this machine's runbook and the record of what this fork changes on top of upstream:
+the RDNA3 / IQ1_M build and service setup (§0–13), and the web page's installed-app support and Monitor
+layout (§14). Read the section that covers the file you are about to touch before you touch it.
+
+**When a merge with upstream conflicts in those files, keep this fork's side** and re-check the behaviour
+after the merge. Upstream does not have these changes, so taking upstream's side removes them silently and
+nothing else in the tree will say so. Say which side you kept in the merge commit.
+
 ## Contributing a change or report
 
 The rules are in **[CONTRIBUTING.md](CONTRIBUTING.md)**. Read it before you open an issue or a pull request, and

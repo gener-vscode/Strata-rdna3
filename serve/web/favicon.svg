@@ -1,9 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- The tab icon: the layer stack the app's panels use (serve/web/sprite.svg, i-layers),
-       drawn bold enough to stay readable at 16 px. -->
-  <path d="M16 2.38 28.42 9.08 16 15.78 3.58 9.08Z" fill="#10b981"/>
-  <path d="M3.58 14.8 16 21.5 28.42 14.8" fill="none" stroke="#10b981" stroke-width="3.67"
-        stroke-linecap="round" stroke-linejoin="round" opacity="0.92"/>
-  <path d="M3.58 21.28 16 27.98 28.42 21.28" fill="none" stroke="#10b981" stroke-width="3.67"
-        stroke-linecap="round" stroke-linejoin="round" opacity="0.78"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <!-- The tab icon: the Monitor's Context fill gauge (serve/web/index.html), the same circle, stroke,
+       dash and turn, so the tab, the installed app (tools/make_web_icons.py) and the page all agree. -->
+  <circle cx="60" cy="60" r="50" fill="none" stroke="#10b981" stroke-width="10" stroke-linecap="round"
+          stroke-dasharray="235.6 314.2" transform="rotate(135 60 60)"/>
 </svg>

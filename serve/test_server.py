@@ -3532,6 +3532,30 @@ class WebApp(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.get(path)[0], 404)
 
+    def test_the_files_the_page_installs_with(self):
+        # the page installs as an app: its manifest, the icons the manifest names, and the worker
+        code, ctype, body = self.get("/web/manifest.webmanifest")
+        self.assertEqual(code, 200)
+        self.assertIn("manifest+json", ctype)
+        m = json.loads(body)
+        self.assertEqual(m["name"], "Strata")
+        self.assertEqual(m["display"], "standalone")
+        self.assertEqual(m["start_url"], "../")      # relative: / by default, the dashboard path when set
+        for icon in m["icons"]:
+            with self.subTest(icon=icon["src"]):
+                self.assertEqual(self.get("/web/" + icon["src"])[0], 200)
+        for path in ("/web/icon-192.png", "/web/icon-512.png", "/web/icon-maskable-512.png",
+                     "/web/apple-touch-icon-180.png"):
+            with self.subTest(path=path):
+                self.assertEqual(self.get(path)[1].split(";")[0], "image/png")
+        # the worker sits in serve/web/ but must control the page at /, which its own directory would not
+        # allow it to; the header is what widens its scope
+        req = urllib.request.Request(self.base + "/web/sw.js")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            self.assertEqual(r.status, 200)
+            self.assertIn("javascript", r.headers.get("Content-Type", ""))
+            self.assertEqual(r.headers.get("Service-Worker-Allowed"), "/")
+
     def test_metrics(self):
         data = json.dumps({"model": "m", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 5}).encode()
         urllib.request.urlopen(urllib.request.Request(self.base + "/v1/chat/completions", data=data,

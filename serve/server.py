@@ -6574,8 +6574,10 @@ def make_handler(svc: Service):
             if path.startswith("/web/"):
                 # the web app's own files (serve/web): styles, script, icon sprite - same origin, no CDN
                 name = path[len("/web/"):]
+                # .png and .webmanifest are for the page installed as an app (serve/web/manifest.webmanifest)
                 types = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-                         ".svg": "image/svg+xml"}
+                         ".svg": "image/svg+xml", ".png": "image/png",
+                         ".webmanifest": "application/manifest+json; charset=utf-8"}
                 f = ROOT / "serve" / "web" / name
                 ext = os.path.splitext(name)[1]
                 if "/" in name or "\\" in name or ext not in types or not f.is_file():
@@ -6584,6 +6586,10 @@ def make_handler(svc: Service):
                 body = f.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", types[ext])
+                if name == "sw.js":
+                    # the worker lives in serve/web/ but must control the page at /, which its own directory
+                    # would not let it; this header is what widens its scope (see the register call in app.js)
+                    self.send_header("Service-Worker-Allowed", "/")
                 self.send_header("Cache-Control", "no-cache")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()

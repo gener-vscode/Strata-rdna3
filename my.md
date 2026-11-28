@@ -405,3 +405,116 @@ grep -E "MemAvailable|SwapFree" /proc/meminfo
 **⚠️ 檔名地雷**：`rdna3/run.py:45` 用 `int(setup.split("-")[1][0])` 由檔名讀 GPU 數 → `ud-iq2_xs-1gpu.json` 呢類**多一個 dash** 嘅名會報 `ValueError`。檔名要係 `iq1_m-1gpu.json`、`iq2_xs-1gpu.json` 呢個格式。
 
 **未量證**：IQ1_M 嘅輸出质量（1-bit／IQ2_XXS／IQ2_S 混合 expert），要自己评。
+
+---
+
+## 14. Web page（`serve/web`）：裝做 app ＋ Monitor 版面（2026-11-28 呢輪改嘅）
+
+> 呢節全部係 **`serve/web`**（即 `/ui/` 嗰個網頁）＋ `serve/server.py` 入面 serve 呢啲檔案嘅嗰條 route。
+> **唔關 `apps/host`（Tauri 桌面版）事** —— 桌面版有自己一套 Monitor（`apps/host/src/screens/Monitor.tsx`，
+> 包括佢自己嘅 `Show all (N)` 掣），**呢輪完全冇改佢**。
+
+### 14.1 ⚠️ 改咗 `serve/server.py` 一定要重啟 server
+`serve/server.py` 嗰條 `/web/` route 用一個 `types` dict 決定邊啲副檔名肯 serve。舊 dict 得 `.css` / `.js` /
+`.svg`，所以 `.png` 同 `.webmanifest` 會行 `if ext not in types → _json(404)`，即 **404 但 Content-Type 係
+`application/json`** —— 呢個係辨識「server 行緊舊 code」嘅特徵。
+
+```sh
+# 睇 server 有冇讀到新 code：
+curl -sI http://127.0.0.1:8080/ui/web/manifest.webmanifest | head -1
+# 舊：404 application/json   新：200 application/manifest+json; charset=utf-8
+```
+
+**兩個坑：**
+1. 呢個 server 係 `BaseHTTP`，**HEAD 冇支援** —— 用 `curl -sI` grep header 係揾唔到嘢，要用 GET dump headers。
+2. 你個 config 有 `"dashboard": "/ui"`，所以路徑要 `/ui/web/...`；用 `/web/...` 會 301 再 404，睇落好似成日壞。
+
+### 14.2 裝做 app（PWA）
+| 檔 | 做乜 |
+|---|---|
+| `serve/web/manifest.webmanifest` | 名稱、icon、`display: standalone`。**`start_url` 同 `scope` 都係 `"../"`**（相對）→ 預設裝喺 `/`，設咗 `"dashboard": "/ui"` 就自動裝喺 `/ui/`，manifest 入面唔使寫死 |
+| `serve/web/sw.js` | Service worker。`VERSION`（而家 `strata-2`）改檔要 bump，先至清走舊 cache |
+| `serve/web/icon-{192,512}.png`、`icon-maskable-512.png`、`apple-touch-icon-180.png` | 由 `tools/make_web_icons.py` 產生 |
+| `serve/web/index.html` | `<link rel="manifest">`、`<link rel="apple-touch-icon">`、`<meta name="theme-color">` |
+| `serve/web/app.js` | `setTheme()` 會跟住改 `meta[name=theme-color]`（dark `#0e1113` / light `#f9fafb`）；`window.isSecureContext && "serviceWorker" in navigator` 先註冊 |
+| `serve/server.py` | `types` 加 `.png` / `.webmanifest`；`sw.js` 附上 **`Service-Worker-Allowed: /`**（worker 企喺 `/web/`，預設 scope 控制唔到 page，呢個 header 先闊到） |
+| `serve/test_server.py` | `test_the_files_the_page_installs_with`：查 manifest content-type、每個 icon 200、四張 PNG 係 `image/png`、`sw.js` 有嗰個 header |
+
+**SW 策略（呢個最要留意）：network-first，而且永遠唔碰 API。**
+`fetch` handler 只處理 `GET` + 同 origin + 路徑喺 `<base>web/` 或 `<base>fonts/`。`/v1`、`/status`、`/metrics`、
+`/health`、`/slots`、`/config`、`/mcp`、同所有 POST（包括 streaming chat）全部原路通過去 —— cache 一個舊
+`/metrics` 或者 model 嘅答案，即係螢幕上一個錯嘅數。Cache 淨係「問唔到人」時 fallback（page 會 show 自己
+嘅 offline veil，而唔係 browser 錯誤頁）。
+
+**非安全環境自動唔做嘢**：`127.0.0.1` / `localhost` / https 先註冊；用 `http://192.168.x.x` 行 LAN 就跳過，
+page 同以前一模一樣，唔會報錯。
+
+### 14.3 icon 係點嚟嘅（可重現）
+```sh
+.venv/bin/python tools/make_web_icons.py      # ⚠️ 一定要 .venv，system python3 冇 PIL
+```
+- 幾何**直接抄自頁面嘅 Context fill gauge**（`index.html`：`r="50"`、`stroke-width="10"`、
+  `stroke-dasharray="235.6 314.2"`、`transform="rotate(135 60 60)"`）→ **270° 圓弧、缺口喺下面**。
+- 用 polyline + `joint="curve"` + 兩端圓 cap（唔靠 Pillow `arc` 嘅角度方向），8× 超取樣再 LANCZOS。
+- 顏色：透明版 `--st-accent` light `#10b981`；深色底版 dark `#34d399` 配 `--st-bg` `#0e1113`。
+- `serve/web/favicon.svg` 一齊改做同一個圓弧，等 **tab / 裝咗嘅 app / 頁面三者一致**。
+
+**換 icon 要兩個動作先見到：** ① 改咗 `server.py` → 重啟 server；② **Chrome 喺「安裝嗰一刻」snapshot icon 落
+`.app`，之後改 manifest 唔會自動換** → `chrome://apps` 右鍵 Uninstall → DevTools  unregister SW → 再 Install。
+
+### 14.4 測試點樣跑
+```sh
+.venv/bin/python -m unittest serve.test_server serve.test_security      # 44 tests
+.venv/bin/python -m unittest discover -s serve                          # 成個 354 tests
+```
+> ⚠️ **system `python3` 冇 pytest 亦冇 PIL**。之前我一度以為「呢部機跑唔到測試」，係 interpreter 揾錯。
+
+### 14.5 Monitor 版面改動清單
+#### 所有闊度都生效
+| 改動 | 喺邊 |
+|---|---|
+| Speed tile 標題做 `Speed (t/s)`，兩個數後面**唔再寫 `t/s`** | `app.js` `TILE.speed` |
+| 兩個數下面 sub 行淨返動態部分：`now` / `this request` / `last request`（冇就空白） | `app.js` `renderMonitor()` |
+| **Prefill 左 / Decode 右**（跟 request 發生次序） | `app.js` `buildTiles()` |
+| **唔係 running 嗰邊變暗 `opacity: .4`**（idle 時兩邊都唔會暗） | `app.css` `.speed-values .is-dim`；id `#side-prefill` / `#side-speed` |
+| 兩個數嘅 tile 數字大細對齊單數 tile（走咗 `clamp()`，改用 `var(--st-fs-stat)`） | `app.css` |
+| 表格標題：`Prefill` / `Decode` / `Hit rate`（走咗 `t/s`、`VRAM`） | `index.html` `<thead>` |
+| **表格欄順序：Time, Status, Prefill, Decode, Prompt, Reused, Output, Hit rate, Duration** | `index.html` + `app.js` `requestCells()`（**兩邊必須一一對應**） |
+| Model state 卡：「Model state」標題＋五個 badge **全部移除**，狀態由左邊 caption 畫做**一個 badge**（跟狀態變色） | `index.html` + `app.css` `#state-label[data-state=…]`（**base，唔係 media query**） |
+| 「Experts」卡標題 → **模型名最後兩段大寫**（`qwen-flash-unsloth-ud-iq2_xs` → `UD-IQ2_XS`），hover 睇全名 | `app.js` `#ctx-title`；大寫靠 `app.css` `text-transform`（DOM 文字唔變，複製/搜尋照舊準） |
+
+#### 得 ≤560px
+| 改動 | 喺邊 |
+|---|---|
+| **頂欄永遠可見**，高 40px（原本 60）；**收埋「Strata」** | `app.css` `@media (max-width: 560px)` |
+| Tabs **唔再係 bar 內嘅灰底 pill 面板**：全高、冇圓角、冇內距，揀中用 `--st-surface-2` 底 + `inset 0 -2px 0` 底線（**用 inset shadow 而唔係 border，因為 border 會食 height**） | `app.css` `.st-header .st-tabs` / `.st-tab` |
+| Request 進度 bar 離開張卡，變做**視窗最頂 2px 固定細線**（GitHub loading 風格） | `app.css` `#state-progress { position: fixed }` |
+| GPU load + Power **合併做一個「GPU」tile**（左 load %、右 power、chart 用 power）；**隱藏 GPU temp** → 得返 4 個 tile | `app.js` `buildTiles()` 嘅 `.tile-gpu`；`app.css` `[data-tile=…]` |
+| Recent requests：**收標題**、**行欄倒轉**（一欄一個 request）、卡尾兩欄排版掣靠右 | `app.css` `.req-card` grid + `app.js` |
+| Status 行移除，**顏色放咗去 time**；time **去秒**（`20:18:14` → `20:18`）；**TIME 右對齊** | `app.js` `REQ_STATUS`；`app.css` `#req-body .req-time` |
+| Prompt / Reused **超過 1K 用 `k`**（`kfmt()`，同 `68k / 200k` 一致） | `app.js` `requestCells(r, narrow)` |
+| Hover 高亮 **row → column**（CSS 冇欄 selector，JS 加 `.hover`） | `app.js` `highlightColumn()` |
+| **預設欄數按實際寬度自動計算**，唔使橫 scroll（`requestFit()`）；resize 有 150ms debounce | `app.js` |
+| 掣文字：`N more` / `Recent`（唔再係 `Show all (N)` / `Show fewer`） | `app.js` |
+| cards 以外空白減半：**page padding 同 card gap 都係 8px**（`var(--st-s-2)`，兩者統一） | `app.css` `.monitor, .about` |
+
+### 14.6 ⚠️ 呢輪踩過／要留意嘅地雷
+1. **560px 呢條線要兩邊同步**：`app.js` 嘅 `matchMedia("(max-width: 560px)")`（`narrowScreen`）決定表格倒唔倒轉，
+   `app.css` 條 `@media (max-width: 560px)` 決定樣式。改一邊唔改另一邊會出鬼 layout。
+2. **`requestCells()` 順序必須等於 `<thead>` 順序**。倒轉版係 JS 由 `<thead>` 逐個讀標籤再按同一 index 配值，
+   淨係改 HTML → 每個標籤下面都啱錯一欄。
+3. **`REQ_STATUS = 1` 係硬 index**，改欄序要改返。
+4. **`.req-head` 係四個 card 共用**（Recent requests、Conversation cache、MCP servers、Model settings）——
+   任何規則都**要加 `.req-card` 前綴**，否則連其他三張卡標題一齊收埋。
+5. **`buildTiles()` 入面唔好將 JS 註釋放進 template literal** —— 會被當 HTML 文字 render 出嚟（我犯過兩次）。
+6. **JSON（manifest）唔容許 `<!-- -->` 註釋** —— 會整爛成個 manifest（我犯過一次）。
+7. **掣顯示條件**：`all.hidden = !reqShowAll && kept <= shown.length`。展開時一定要留低個掣，否則撳完
+   「N more」就冇返去嘅路（呢個係真 bug，已修）。
+8. `#state-badges` 呢個元素**已經由 HTML 删走**：任何再 `querySelector("#state-badges …")` 嘅 code 都會靜靜郁空。
+9. `.state-card` 而家**冇咗 `st-card` class**（用家自己改嘅），所以張卡冇邊框/底色。
+
+### 14.7 未做／未證
+- **全部呢輪改動都冇落瀏覽器實測渲染**，淨係做咗語法檢查、CSS 括號平衡、同 server 端 curl/單元測試。
+  有幾處靠 `getBoundingClientRect()`（`requestFit`）同 media query 實際行為，**要拖下視窗先放心**。
+- `apps/host`（Tauri 桌面版）完全冇郁。
+- `docs/DETAILS.md` 冇寫呢啲行為（AGENTS.md 本來要求寫落去）；呢份 `my.md` §14 係目前唯一紀錄。
